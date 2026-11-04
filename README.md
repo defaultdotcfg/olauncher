@@ -6,4 +6,6 @@ For now, I did what I tought it was impossible: get the first render.
 
 The port is getting build using XWine, XDLCompiler and Windurango. Azimuth Launcher was used only for research.
 
+Note: the entire project was built using Antigravity IDE, using Gemini 3.8 Flash model.
+
 <img width="1919" height="1079" alt="ima1ge" src="https://github.com/user-attachments/assets/080503c2-f734-4f27-b633-1d1c3e73f683" />
