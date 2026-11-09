@@ -1,0 +1,7 @@
+* text=auto
+*.ps1 text eol=crlf
+*.cpp text
+*.h text
+*.inc text
+*.py text
+*.json text

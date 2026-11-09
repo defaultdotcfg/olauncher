@@ -1,0 +1,255 @@
+{
+ "_scalar_if": [
+  "79f473624acd0bcc",
+  "8bae908a39ae1f1c",
+  "95d626d09ad8a406",
+  "afe7fd60103fe6d6",
+  "ceda6ed547dba75d"
+ ],
+ "79f473624acd0bcc": [
+  [
+   "  v2 = 0;",
+   "  v2 = asuint(i.pos.x);  // PS input VGPRs: v0,v1 = interp I/J, v2,v3 = POS_X/POS_Y"
+  ],
+  [
+   "  v3 = 0;",
+   "  v3 = asuint(i.pos.y);"
+  ],
+  [
+   "= Tx_sp0_r0[25].SampleLevel(Sm_sp0_r0[5], float2(asfloat(v33), asfloat(v34)), asfloat(v35));",
+   "= blur_g_(ex, Tx_sp0_r0[25], Sm_sp0_r0[5], float2(asfloat(v33), asfloat(v34)));  // only backdrop pixels (element type 20): unguarded it ran for every UI pixel -> GPU TDR"
+  ],
+  [
+   "float4 main(PSIn i)",
+   "// Xbox reads mip 3 of the UI backdrop; on PC that target has one mip, so blur mip 0 instead (~mip 3 footprint).\nfloat4 blur_mip3_(Texture2D tx, SamplerState sm, float2 uv) {\n  uint w, h; tx.GetDimensions(w, h); float2 px = 4.0 / float2(w, h); float4 acc = 0; float ws = 0;\n  [unroll] for (int y = -3; y <= 3; ++y) [unroll] for (int x = -3; x <= 3; ++x) {\n    float g = exp(-(float)(x * x + y * y) / 6.0); acc += tx.SampleLevel(sm, uv + float2(x, y) * px, 0) * g; ws += g; }\n  return acc / ws;\n}\nfloat4 blur_g_(bool e, Texture2D tx, SamplerState sm, float2 uv) { float4 r = 0; [branch] if (e) r = blur_mip3_(tx, sm, uv); return r; }\nfloat4 main(PSIn i)"
+  ],
+  [
+   "[loop] for (uint lp1 = 0; lp1 < 4096u; ++lp1) {   // loop head label_0078",
+   "[loop] for (uint lp1 = 0; lp1 < 64u; ++lp1) {   // loop head label_0078  (data-driven count/list walk: capped so stale UI buffers during loads cannot TDR the GPU)"
+  ],
+  [
+   "[loop] for (uint lp43 = 0; lp43 < 4096u; ++lp43) {   // loop head label_4548",
+   "[loop] for (uint lp43 = 0; lp43 < 64u; ++lp43) {   // loop head label_4548  (data-driven count/list walk: capped so stale UI buffers during loads cannot TDR the GPU)"
+  ],
+  [
+   "[loop] for (uint lp44 = 0; lp44 < 4096u; ++lp44) {   // loop head label_4768",
+   "[loop] for (uint lp44 = 0; lp44 < 64u; ++lp44) {   // loop head label_4768  (data-driven count/list walk: capped so stale UI buffers during loads cannot TDR the GPU)"
+  ],
+  [
+   "Tx_sp23_r0[0 + u10 * 1]",
+   "Tx_sp23_r0[min(0 + u10 * 1, 1023u)]"
+  ],
+  [
+   "Tx_sp23_r0[0 + u6 * 1]",
+   "Tx_sp23_r0[min(0 + u6 * 1, 1023u)]"
+  ],
+  [
+   "Tx_sp23_r0[0 + u7 * 1]",
+   "Tx_sp23_r0[min(0 + u7 * 1, 1023u)]"
+  ],
+  [
+   "Tx_sp24_r0[0 + u10 * 1]",
+   "Tx_sp24_r0[min(0 + u10 * 1, 255u)]"
+  ],
+  [
+   "Tx_sp24_r0[0 + u6 * 1]",
+   "Tx_sp24_r0[min(0 + u6 * 1, 255u)]"
+  ],
+  [
+   "Tx_sp24_r0[0 + u7 * 1]",
+   "Tx_sp24_r0[min(0 + u7 * 1, 255u)]"
+  ],
+  [
+   "[loop] for (uint lp10 = 0; lp10 < 4096u; ++lp10)",
+   "[loop] for (uint lp10 = 0; lp10 < 128u; ++lp10)"
+  ],
+  [
+   "[loop] for (uint lp11 = 0; lp11 < 4096u; ++lp11)",
+   "[loop] for (uint lp11 = 0; lp11 < 128u; ++lp11)"
+  ],
+  [
+   "[loop] for (uint lp12 = 0; lp12 < 4096u; ++lp12)",
+   "[loop] for (uint lp12 = 0; lp12 < 128u; ++lp12)"
+  ],
+  [
+   "[loop] for (uint lp13 = 0; lp13 < 4096u; ++lp13)",
+   "[loop] for (uint lp13 = 0; lp13 < 128u; ++lp13)"
+  ],
+  [
+   "[loop] for (uint lp14 = 0; lp14 < 4096u; ++lp14)",
+   "[loop] for (uint lp14 = 0; lp14 < 128u; ++lp14)"
+  ],
+  [
+   "[loop] for (uint lp15 = 0; lp15 < 4096u; ++lp15)",
+   "[loop] for (uint lp15 = 0; lp15 < 128u; ++lp15)"
+  ],
+  [
+   "[loop] for (uint lp16 = 0; lp16 < 4096u; ++lp16)",
+   "[loop] for (uint lp16 = 0; lp16 < 128u; ++lp16)"
+  ],
+  [
+   "[loop] for (uint lp17 = 0; lp17 < 4096u; ++lp17)",
+   "[loop] for (uint lp17 = 0; lp17 < 128u; ++lp17)"
+  ],
+  [
+   "[loop] for (uint lp18 = 0; lp18 < 4096u; ++lp18)",
+   "[loop] for (uint lp18 = 0; lp18 < 128u; ++lp18)"
+  ],
+  [
+   "[loop] for (uint lp19 = 0; lp19 < 4096u; ++lp19)",
+   "[loop] for (uint lp19 = 0; lp19 < 128u; ++lp19)"
+  ],
+  [
+   "[loop] for (uint lp2 = 0; lp2 < 4096u; ++lp2)",
+   "[loop] for (uint lp2 = 0; lp2 < 128u; ++lp2)"
+  ],
+  [
+   "[loop] for (uint lp20 = 0; lp20 < 4096u; ++lp20)",
+   "[loop] for (uint lp20 = 0; lp20 < 128u; ++lp20)"
+  ],
+  [
+   "[loop] for (uint lp21 = 0; lp21 < 4096u; ++lp21)",
+   "[loop] for (uint lp21 = 0; lp21 < 128u; ++lp21)"
+  ],
+  [
+   "[loop] for (uint lp22 = 0; lp22 < 4096u; ++lp22)",
+   "[loop] for (uint lp22 = 0; lp22 < 128u; ++lp22)"
+  ],
+  [
+   "[loop] for (uint lp23 = 0; lp23 < 4096u; ++lp23)",
+   "[loop] for (uint lp23 = 0; lp23 < 128u; ++lp23)"
+  ],
+  [
+   "[loop] for (uint lp24 = 0; lp24 < 4096u; ++lp24)",
+   "[loop] for (uint lp24 = 0; lp24 < 128u; ++lp24)"
+  ],
+  [
+   "[loop] for (uint lp25 = 0; lp25 < 4096u; ++lp25)",
+   "[loop] for (uint lp25 = 0; lp25 < 128u; ++lp25)"
+  ],
+  [
+   "[loop] for (uint lp26 = 0; lp26 < 4096u; ++lp26)",
+   "[loop] for (uint lp26 = 0; lp26 < 128u; ++lp26)"
+  ],
+  [
+   "[loop] for (uint lp27 = 0; lp27 < 4096u; ++lp27)",
+   "[loop] for (uint lp27 = 0; lp27 < 128u; ++lp27)"
+  ],
+  [
+   "[loop] for (uint lp28 = 0; lp28 < 4096u; ++lp28)",
+   "[loop] for (uint lp28 = 0; lp28 < 128u; ++lp28)"
+  ],
+  [
+   "[loop] for (uint lp29 = 0; lp29 < 4096u; ++lp29)",
+   "[loop] for (uint lp29 = 0; lp29 < 128u; ++lp29)"
+  ],
+  [
+   "[loop] for (uint lp3 = 0; lp3 < 4096u; ++lp3)",
+   "[loop] for (uint lp3 = 0; lp3 < 128u; ++lp3)"
+  ],
+  [
+   "[loop] for (uint lp30 = 0; lp30 < 4096u; ++lp30)",
+   "[loop] for (uint lp30 = 0; lp30 < 128u; ++lp30)"
+  ],
+  [
+   "[loop] for (uint lp31 = 0; lp31 < 4096u; ++lp31)",
+   "[loop] for (uint lp31 = 0; lp31 < 128u; ++lp31)"
+  ],
+  [
+   "[loop] for (uint lp32 = 0; lp32 < 4096u; ++lp32)",
+   "[loop] for (uint lp32 = 0; lp32 < 128u; ++lp32)"
+  ],
+  [
+   "[loop] for (uint lp33 = 0; lp33 < 4096u; ++lp33)",
+   "[loop] for (uint lp33 = 0; lp33 < 128u; ++lp33)"
+  ],
+  [
+   "[loop] for (uint lp34 = 0; lp34 < 4096u; ++lp34)",
+   "[loop] for (uint lp34 = 0; lp34 < 128u; ++lp34)"
+  ],
+  [
+   "[loop] for (uint lp35 = 0; lp35 < 4096u; ++lp35)",
+   "[loop] for (uint lp35 = 0; lp35 < 128u; ++lp35)"
+  ],
+  [
+   "[loop] for (uint lp36 = 0; lp36 < 4096u; ++lp36)",
+   "[loop] for (uint lp36 = 0; lp36 < 128u; ++lp36)"
+  ],
+  [
+   "[loop] for (uint lp37 = 0; lp37 < 4096u; ++lp37)",
+   "[loop] for (uint lp37 = 0; lp37 < 128u; ++lp37)"
+  ],
+  [
+   "[loop] for (uint lp38 = 0; lp38 < 4096u; ++lp38)",
+   "[loop] for (uint lp38 = 0; lp38 < 128u; ++lp38)"
+  ],
+  [
+   "[loop] for (uint lp39 = 0; lp39 < 4096u; ++lp39)",
+   "[loop] for (uint lp39 = 0; lp39 < 128u; ++lp39)"
+  ],
+  [
+   "[loop] for (uint lp4 = 0; lp4 < 4096u; ++lp4)",
+   "[loop] for (uint lp4 = 0; lp4 < 128u; ++lp4)"
+  ],
+  [
+   "[loop] for (uint lp40 = 0; lp40 < 4096u; ++lp40)",
+   "[loop] for (uint lp40 = 0; lp40 < 128u; ++lp40)"
+  ],
+  [
+   "[loop] for (uint lp41 = 0; lp41 < 4096u; ++lp41)",
+   "[loop] for (uint lp41 = 0; lp41 < 128u; ++lp41)"
+  ],
+  [
+   "[loop] for (uint lp42 = 0; lp42 < 4096u; ++lp42)",
+   "[loop] for (uint lp42 = 0; lp42 < 128u; ++lp42)"
+  ],
+  [
+   "[loop] for (uint lp5 = 0; lp5 < 4096u; ++lp5)",
+   "[loop] for (uint lp5 = 0; lp5 < 128u; ++lp5)"
+  ],
+  [
+   "[loop] for (uint lp6 = 0; lp6 < 4096u; ++lp6)",
+   "[loop] for (uint lp6 = 0; lp6 < 128u; ++lp6)"
+  ],
+  [
+   "[loop] for (uint lp7 = 0; lp7 < 4096u; ++lp7)",
+   "[loop] for (uint lp7 = 0; lp7 < 128u; ++lp7)"
+  ],
+  [
+   "[loop] for (uint lp8 = 0; lp8 < 4096u; ++lp8)",
+   "[loop] for (uint lp8 = 0; lp8 < 128u; ++lp8)"
+  ],
+  [
+   "[loop] for (uint lp9 = 0; lp9 < 4096u; ++lp9)",
+   "[loop] for (uint lp9 = 0; lp9 < 128u; ++lp9)"
+  ]
+ ],
+ "ceda6ed547dba75d": [
+  [
+   "Tx_sp51_r0[4 + u19 * 1]",
+   "Tx_sp51_r0[min(4 + u19 * 1, 18u)]"
+  ],
+  [
+   "Tx_sp51_r0[8 + u19 * 1]",
+   "Tx_sp51_r0[min(8 + u19 * 1, 18u)]"
+  ],
+  [
+   "float4 main(PSIn i)",
+   "RWByteAddressBuffer g_ctr : register(u200, space99);\nfloat4 main(PSIn i)"
+  ],
+  [
+   "  v5 = ex ? (asuint(mul_legacy(asfloat(v5), asfloat(v12)))) : v5;",
+   "  v5 = ex ? (asuint(mul_legacy(asfloat(v5), asfloat(v12)))) : v5;\n  // Photo export (bridge F12): while g_ctr[0x80000] holds a token, store the graded colour BEFORE the UI layer (Tx[15])\n  // is mixed in, as RGBA8 at 0x100000 + (y*4096 + x)*4; pixel (0,0) echoes the token at 0x80010 so the bridge knows it ran.\n  { uint pt_ = g_ctr.Load(0x80000u); if (pt_ != 0u) { uint2 pp_ = uint2(i.pos.xy);\n      if (pp_.x < 4096u && pp_.y < 2304u) { float3 pl_ = saturate(float3(asfloat(v2), asfloat(v6), asfloat(v5)));   // linear: the real RTV is *_SRGB, so encode like the hardware does\n        uint3 pb_ = uint3((pl_ <= 0.0031308 ? pl_ * 12.92 : 1.055 * pow(pl_, 1.0 / 2.4) - 0.055) * 255.0 + 0.5);\n        g_ctr.Store(0x100000u + (pp_.y * 4096u + pp_.x) * 4u, pb_.x | (pb_.y << 8) | (pb_.z << 16) | 0xFF000000u); }\n      if (pp_.x == 0u && pp_.y == 0u) g_ctr.Store(0x80010u, pt_); } }"
+  ]
+ ],
+ "_else_gate_skip": {
+  "547972b534478e91": [
+   "2694",
+   "334c",
+   "4678"
+  ]
+ },
+ "_stub_image": [
+  "c4071ab133728793"
+ ]
+}

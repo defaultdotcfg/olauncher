@@ -1,0 +1,55 @@
+# Pushing a tag vX.Y.Z builds the port and publishes a GitHub release with the binaries.
+# The launcher's update check compares that tag with OLAUNCHER_VERSION (src/launcher/version.h).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match version.h
+        shell: pwsh
+        run: |
+          $m = Select-String -Path src/launcher/version.h -Pattern 'OLAUNCHER_VERSION L"([^"]+)"'
+          $v = "v" + $m.Matches[0].Groups[1].Value
+          if ($v -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} does not match version.h ($v)" }
+
+      - name: Build
+        shell: pwsh
+        run: ./scripts/build.ps1
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkg = "olauncher-${{ github.ref_name }}"
+          New-Item -ItemType Directory -Force "$pkg/scripts/translator" | Out-Null
+          Copy-Item bin/OnRushLauncher.exe, bin/kernelx.dll, bin/combase.dll, bin/EtwPlus.dll, bin/MMDevAPI.dll, bin/d3d12_x.dll $pkg
+          Copy-Item scripts/stage.ps1, scripts/brand_exe.py "$pkg/scripts"
+          Copy-Item scripts/translator/* "$pkg/scripts/translator"
+          Copy-Item README.md, LICENSE, THIRD_PARTY.md $pkg
+          Copy-Item licenses $pkg -Recurse
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # release text = this tag's section of CHANGELOG.md ("## vX.Y.Z ..." up to the next "## ")
+          $tag = "${{ github.ref_name }}"
+          $lines = Get-Content CHANGELOG.md -Encoding UTF8
+          $start = ($lines | Select-String -Pattern "^## $([regex]::Escape($tag))\b" | Select-Object -First 1).LineNumber
+          if (-not $start) { throw "CHANGELOG.md has no section for $tag" }
+          $rest = $lines[$start..($lines.Count - 1)]
+          $end = ($rest | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
+          $notes = if ($end) { $rest[0..($end - 2)] } else { $rest }
+          $notes | Set-Content notes.md -Encoding UTF8
+          gh release create $tag "olauncher-$tag.zip" --title "olauncher $tag" --notes-file notes.md

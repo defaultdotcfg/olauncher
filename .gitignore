@@ -66,3 +66,42 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# ---- olauncher ----
+# build output
+bin/
+build/
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.dll
+*.exe
+__pycache__/
+*.pyc
+
+# staged game folder and anything taken from the game - never commit
+dist_game/
+dat/
+EmbeddedXvd/
+Mount/
+shaders/
+*.dxbc
+*.cso
+*.bin
+*.xvd
+*.pri
+appxmanifest.xml
+SplashScreen.png
+save/
+
+# runtime output
+*.log
+*.bmp
+fotos/
+onrush.ini
+
+# local backups
+*.bak*
+*.orig
