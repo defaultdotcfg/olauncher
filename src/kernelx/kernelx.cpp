@@ -885,6 +885,10 @@ static void LogKernelx(const char* fmt, ...) {
   // Under the launcher's debug loop each OutputDebugString blocks the game; kernelx.log has it all.
   static const bool s_toDbg = GetEnvironmentVariableA("ONRUSH_LOG_TO_DEBUGGER", nullptr, 0) > 0;
   if (s_toDbg) OutputDebugStringA(buf);
+  // one log per session; the previous one is kept as kernelx.prev.log
+  static volatile LONG s_rotated = 0;
+  if (!s_rotated && InterlockedExchange(&s_rotated, 1) == 0)
+    MoveFileExA("kernelx.log", "kernelx.prev.log", MOVEFILE_REPLACE_EXISTING);
   FILE* f = fopen("kernelx.log", "a");
   if (f) {
     if (len > 0) fwrite(buf, 1, len, f);

@@ -74,7 +74,7 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Pular introdução (tela legal e logos)", L"Skip intro (legal screen and logos)", L"Omitir introducción (aviso legal y logos)" },
     { L"Opções avançadas", L"Advanced options", L"Opciones avanzadas" },
     { L"Camada de depuração do Direct3D 12", L"Direct3D 12 debug layer", L"Capa de depuración de Direct3D 12" },
-    { L"Capturas de quadros (depuração, BMP)", L"Frame captures (debug, BMP)", L"Capturas de fotogramas (depuración, BMP)" },
+    { L"Modo de depuração (log completo e capturas BMP)", L"Debug mode (full log and BMP captures)", L"Modo de depuración (registro completo y capturas BMP)" },
     { L"Ir direto para o gameplay (teste)", L"Go straight to gameplay (test)", L"Ir directo a la partida (prueba)" },
     { L"JOGAR", L"PLAY", L"JUGAR" },
     { L"FECHAR JOGO", L"CLOSE GAME", L"CERRAR JUEGO" },

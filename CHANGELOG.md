@@ -1,11 +1,5 @@
 # Changelog
 
-## v0.1.1
-
-- **Alt+F4 e o botão de fechar da janela agora fecham o jogo.** Antes o pedido era ignorado e só dava para sair pelo launcher.
-- **Capturas de quadros desligadas por padrão.** A v0.1.0 salvava imagens `frame_*.bmp` (~8 MB cada) na pasta do jogo a cada ~5 segundos de jogo, o que também causava pequenos travamentos. Agora elas só são geradas com a opção de depuração **Opções avançadas → Capturas de quadros (depuração, BMP)**. Os arquivos `frame_*.bmp` que a v0.1.0 deixou na pasta do jogo podem ser apagados.
-- A opção "Logs detalhados da bridge" (que não tinha efeito) deu lugar à opção de capturas.
-
 ## v0.1.0 — primeira versão pública
 
 Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windows x64 com Direct3D 12. Nenhum arquivo do jogo vem junto: é preciso ter a sua própria cópia do pacote (veja o README).
@@ -48,6 +42,9 @@ Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windo
 - Aba **Playlist**: criar, renomear e excluir playlists; arrastar músicas e pastas; reordenar; pesquisar; ouvir a prévia.
 - "Preparando shaders" ao apertar JOGAR, com barra de progresso e botão para pular: tradução, compilação e cache de pipelines.
 - Log embutido (ver, copiar, limpar), e o jogo abre sem janela de console.
+- Logs enxutos: cada tipo de mensagem repetida aparece só algumas vezes, e cada log guarda só a sessão atual e a anterior (`*.prev.log`).
+- **Modo de depuração** (Opções avançadas), desligado por padrão: log completo da bridge e capturas `frame_*.bmp` periódicas da tela.
+- Alt+F4 e o botão de fechar da janela fecham o jogo.
 - **Atualização automática**: o launcher avisa quando há uma versão nova aqui no GitHub. Se você aceitar, ele baixa o zip, confere o SHA-256, fecha, atualiza a própria pasta e abre de novo. Configurações, saves e shaders são mantidos.
 
 ### Estabilidade

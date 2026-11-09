@@ -53,7 +53,37 @@
 static SRWLOCK g_log_lock = SRWLOCK_INIT;
 static HANDLE g_hLogFile = INVALID_HANDLE_VALUE;
 
+// Full log only in debug mode (launcher option, ONRUSH_VERBOSE_LOG=1). Otherwise each message type
+// (same format string) is written at most LOG_CAP times per session: per-call traces like
+// GetGPUVirtualAddress made ~1.4 million lines (176 MB) in one session. Formats starting with '%'
+// (crash/hang dumps built elsewhere) are never capped.
+static bool VerboseLog() {
+  static const bool s = GetEnvironmentVariableA("ONRUSH_VERBOSE_LOG", nullptr, 0) > 0;
+  return s;
+}
+static const unsigned LOG_CAP = 50;
+// returns 0 = write, 1 = write + "omitted" note, 2 = drop
+static int LogCapCheck(const char *format) {
+  if (format[0] == '%' || VerboseLog()) return 0;
+  enum { N = 16384 };
+  static const char *volatile s_keys[N];
+  static volatile LONG s_counts[N];
+  size_t h = ((uintptr_t)format >> 3) * 0x9E3779B97F4A7C15ull;
+  for (size_t i = 0; i < 64; i++) {
+    size_t k = (h + i) & (N - 1);
+    const char *cur = s_keys[k];
+    if (!cur) cur = (const char *)InterlockedCompareExchangePointer((PVOID volatile *)&s_keys[k], (PVOID)format, nullptr);
+    if (!cur || cur == format) {
+      LONG c = InterlockedIncrement(&s_counts[k]);
+      return c <= (LONG)LOG_CAP ? 0 : c == (LONG)LOG_CAP + 1 ? 1 : 2;
+    }
+  }
+  return 0;  // table full: no cap
+}
+
 static void log_line(const char *format, ...) {
+  const int cap = LogCapCheck(format);
+  if (cap == 2) return;
   char text[1024];
   va_list args;
   va_start(args, format);
@@ -90,15 +120,24 @@ static void log_line(const char *format, ...) {
     if (length && length < MAX_PATH) {
       wchar_t *slash = wcsrchr(path, L'\\');
       if (slash) {
+        // one log per session; the previous one is kept as onrush_d3d12_x.prev.log
+        wchar_t prev[MAX_PATH];
+        wcscpy_s(prev, path);
+        wcscpy_s(prev + (slash + 1 - path), MAX_PATH - (slash + 1 - path), L"onrush_d3d12_x.prev.log");
         wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"onrush_d3d12_x.log");
-        g_hLogFile = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                 OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        MoveFileExW(path, prev, MOVEFILE_REPLACE_EXISTING);
+        g_hLogFile = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
       }
     }
   }
   if (g_hLogFile != INVALID_HANDLE_VALUE) {
     DWORD written = 0;
     WriteFile(g_hLogFile, text, (DWORD)strlen(text), &written, nullptr);
+    if (cap == 1) {
+      static const char note[] = "[log] (more lines of this kind omitted; full log: launcher debug mode)\r\n";
+      WriteFile(g_hLogFile, note, (DWORD)(sizeof(note) - 1), &written, nullptr);
+    }
     // Flush at most every 250 ms, but always on crash-related lines.
     static DWORD s_lastFlush = 0;
     DWORD now = GetTickCount();

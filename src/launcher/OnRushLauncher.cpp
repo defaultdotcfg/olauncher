@@ -121,6 +121,8 @@ static HFONT g_hFontLog = nullptr;
 static HANDLE g_hGameProcess = nullptr;
 static DWORD g_gamePid = 0;
 static bool g_gameRunning = false;
+static bool g_debugMode = false;      // launcher debug option: full logs + frame captures (set per game launch)
+static int g_firstChanceLogged = 0;   // first-chance exceptions logged in this game session
 static bool g_warmupLaunch = false;  // first-run warm-up (launcher_ui.inc): small window, no sound, killed after a while
 static HANDLE g_hWorkerThread = nullptr;
 
@@ -137,7 +139,7 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->gamePath[0] = L'\0';
     wcscpy_s(cfg->savePath, MAX_PATH, L".\\save");
     cfg->diagnostics = 1;
-    cfg->verboseLog = 0;  // debug option "frame captures" (ini key FrameDumps)
+    cfg->verboseLog = 0;  // debug mode: full logs + frame captures (ini key DebugMode)
     cfg->d3d12Debug = 0;
     cfg->autoRestart = 0;
     cfg->quickGameplay = 0;
@@ -169,7 +171,7 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     GetPrivateProfileStringW(L"System", L"GamePath", cfg->gamePath, cfg->gamePath, MAX_PATH, iniPath);
     GetPrivateProfileStringW(L"System", L"SavePath", cfg->savePath, cfg->savePath, MAX_PATH, iniPath);
     cfg->diagnostics = GetPrivateProfileIntW(L"System", L"Diagnostics", cfg->diagnostics, iniPath);
-    cfg->verboseLog = GetPrivateProfileIntW(L"System", L"FrameDumps", cfg->verboseLog, iniPath);
+    cfg->verboseLog = GetPrivateProfileIntW(L"System", L"DebugMode", cfg->verboseLog, iniPath);
     cfg->d3d12Debug = GetPrivateProfileIntW(L"Graphics", L"D3D12Debug", cfg->d3d12Debug, iniPath);
     cfg->quickGameplay = GetPrivateProfileIntW(L"System", L"QuickGameplay", cfg->quickGameplay, iniPath);
     cfg->skipIntro = GetPrivateProfileIntW(L"System", L"SkipIntro", cfg->skipIntro, iniPath);
@@ -209,7 +211,8 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
     WritePrivateProfileStringW(L"System", L"Diagnostics", buf, iniPath);
 
     swprintf_s(buf, 64, L"%d", cfg->verboseLog);
-    WritePrivateProfileStringW(L"System", L"FrameDumps", buf, iniPath);
+    WritePrivateProfileStringW(L"System", L"DebugMode", buf, iniPath);
+    WritePrivateProfileStringW(L"System", L"FrameDumps", nullptr, iniPath);  // v0.1.1 key
     WritePrivateProfileStringW(L"System", L"VerboseLog", nullptr, iniPath);  // old key (was always 1, unused)
 
     swprintf_s(buf, 64, L"%d", cfg->d3d12Debug);
@@ -327,6 +330,14 @@ static void LogPrintf(const wchar_t *fmt, ...)
     {
         wchar_t logPath[MAX_PATH];
         swprintf_s(logPath, MAX_PATH, L"%ls\\onrush_launcher.log", g_exeDir);
+        // one log per launcher run; the previous one is kept as onrush_launcher.prev.log
+        static volatile LONG s_rotated = 0;
+        if (!s_rotated && InterlockedExchange(&s_rotated, 1) == 0)
+        {
+            wchar_t prevPath[MAX_PATH];
+            swprintf_s(prevPath, MAX_PATH, L"%ls\\onrush_launcher.prev.log", g_exeDir);
+            MoveFileExW(logPath, prevPath, MOVEFILE_REPLACE_EXISTING);
+        }
         HANDLE hFile = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
                                    FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hFile != INVALID_HANDLE_VALUE)
@@ -435,8 +446,11 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 
     swprintf_s(envBuf, 64, L"%d", cfg->d3d12Debug);
     SetEnvironmentVariableW(L"ONRUSH_D3D12_DEBUG", envBuf);
-    // debug: periodic frame_*.bmp captures in the game folder
-    SetEnvironmentVariableW(L"ONRUSH_FRAME_DUMPS", cfg->verboseLog ? L"1" : nullptr);
+    // debug mode: full bridge log + periodic frame_*.bmp captures in the game folder
+    g_debugMode = cfg->verboseLog != 0;
+    g_firstChanceLogged = 0;
+    SetEnvironmentVariableW(L"ONRUSH_FRAME_DUMPS", g_debugMode ? L"1" : nullptr);
+    SetEnvironmentVariableW(L"ONRUSH_VERBOSE_LOG", g_debugMode ? L"1" : nullptr);
 
     // Quick test mode (launcher option or "OnRushLauncher.exe -gameplay"): the bridge skips the boot screens.
     {
@@ -638,10 +652,15 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
                 }
             }
 
+            // first-chance exceptions are often handled by the game or the bridge and repeat a lot:
+            // the first 30 per game session go to the log (all of them in debug mode)
             if (firstChance)
             {
-                LogPrintf(L"[LAUNCHER] Exceção First-Chance: 0x%08X no Endereço: %p (%ls + 0x%llX)\r\n",
-                          pRec->ExceptionCode, pRec->ExceptionAddress, modName, (unsigned long long)modOffset);
+                if (g_debugMode || ++g_firstChanceLogged <= 30)
+                    LogPrintf(L"[LAUNCHER] Exceção First-Chance: 0x%08X no Endereço: %p (%ls + 0x%llX)\r\n",
+                              pRec->ExceptionCode, pRec->ExceptionAddress, modName, (unsigned long long)modOffset);
+                if (!g_debugMode && g_firstChanceLogged == 30)
+                    LogPrintf(L"[LAUNCHER] (próximas exceções First-Chance omitidas; log completo: modo de depuração)\r\n");
             }
             else
             {
