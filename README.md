@@ -47,21 +47,6 @@ powershell -ExecutionPolicy Bypass -File scripts\stage.ps1 -GameRoot "D:\caminho
 
 Para traduzir os shaders sem o launcher (com Python e o Windows SDK): `python scripts\translator\translate_all.py <pasta do jogo>`.
 
-## Atualizações do launcher
-
-O launcher consulta `https://api.github.com/repos/defaultdotcfg/olauncher/releases/latest` ao abrir (em silêncio) e quando você clica em **Verificar atualizações**, no canto inferior da arte.
-
-- Se a tag da última release (`vX.Y.Z`) for maior que a versão em `src/launcher/version.h`, o botão fica laranja. Ao clicar, o launcher pergunta se deve instalar.
-- Se você aceitar, ele baixa o zip da release (só de `github.com/defaultdotcfg/olauncher/releases/download/`), confere o SHA-256 publicado pelo GitHub, fecha, copia os arquivos novos por cima da pasta dele e abre de novo. `onrush.ini`, `save\`, `shaders\`, playlists e os arquivos do jogo nunca são tocados.
-- Nada é instalado sem a sua confirmação, e a atualização fica bloqueada enquanto o jogo está aberto.
-- A verificação ao abrir pode ser desligada com `OnRushLauncher.exe -noupdatecheck`.
-
-### Publicar uma versão
-
-1. Atualize `OLAUNCHER_VERSION` em `src/launcher/version.h` (ex.: `0.2.0`) e adicione a seção `## v0.2.0` no `CHANGELOG.md`. Esse texto vira a descrição da release.
-2. Faça o commit e crie a tag igual: `git tag v0.2.0 && git push origin v0.2.0`.
-3. O workflow `.github/workflows/release.yml` compila, empacota o tradutor, confere se a tag bate com `version.h` e publica a release com o zip `olauncher-v0.2.0.zip`. O zip traz os binários, o tradutor, os scripts e as licenças, sem nenhum arquivo do jogo.
-
 ## Variáveis de diagnóstico (opcional)
 
 | Variável | Efeito |
