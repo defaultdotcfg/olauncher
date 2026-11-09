@@ -24,6 +24,10 @@ import subprocess, tempfile, os as _os
 def _find_dxc():
     """dxc.exe: $DXC, else the newest Windows SDK that has it, else PATH."""
     if _os.environ.get('DXC'): return _os.environ['DXC']
+    import sys as _s
+    if getattr(_s, 'frozen', False):  # packaged translator: dxc.exe ships next to it
+        here = _os.path.join(_os.path.dirname(_s.executable), 'dxc.exe')
+        if _os.path.exists(here): return here
     import glob as _g
     for base in (r"C:\Program Files (x86)\Windows Kits\10\bin", r"C:\Program Files\Windows Kits\10\bin"):
         found = sorted(_g.glob(_os.path.join(base, '10.*', 'x64', 'dxc.exe')))
@@ -35,7 +39,8 @@ def _dxc(src: bytes, target: str):
     with tempfile.TemporaryDirectory() as td:
         fi = _os.path.join(td, 's.hlsl'); fo = _os.path.join(td, 's.cso')
         open(fi, 'wb').write(src)
-        r = subprocess.run([_DXC, '-nologo', '-T', t6, '-E', 'main', '-O3', '-HV', '2018', '-Fo', fo, fi], capture_output=True, text=True)
+        r = subprocess.run([_DXC, '-nologo', '-T', t6, '-E', 'main', '-O3', '-HV', '2018', '-Fo', fo, fi], capture_output=True, text=True,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         if r.returncode != 0 or not _os.path.exists(fo): return None, (r.stderr or r.stdout)[-2000:]
         return open(fo, 'rb').read(), ''
 _fxc_compile_hlsl, _fxc_compile_to_bytes = compile_hlsl, compile_to_bytes

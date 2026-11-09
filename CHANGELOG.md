@@ -1,21 +1,5 @@
 # Changelog
 
-## v0.1.1
-
-### Launcher
-- **Prepara o jogo sozinho**: ao apertar JOGAR (ou ao escolher a pasta do jogo), basta apontar a sua cópia, ou seja, o pacote extraído com `Mount` e `EmbeddedXvd`. O launcher:
-  - copia o executável e os arquivos pequenos (~60 MB) para a pasta dele;
-  - liga `dat` e `EmbeddedXvd` como atalhos para a sua cópia;
-  - cria o `onrush-pc.exe`.
-  Não precisa mais de PowerShell nem de Python para essa parte, e a sua cópia não é alterada.
-- O `onrush-pc.exe` (cópia do executável do jogo com o nome ONRUSH™ no Gerenciador de Tarefas) é criado pelo próprio launcher sempre que faltar.
-- Mensagens da pasta do jogo mais claras: pedem a pasta da sua cópia, não mais o `onrush-pc.exe`.
-- Nova opção de linha de comando `-setup "<pasta da cópia>"`.
-
-### Problemas conhecidos
-- Na primeira execução a tela fica preta até os shaders serem traduzidos com `scripts\translator\prepare_shaders.ps1` (Python + Windows SDK). Veja o README.
-- Os demais itens da v0.1.0 continuam valendo.
-
 ## v0.1.0 — primeira versão pública
 
 Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windows x64 com Direct3D 12. Nenhum arquivo do jogo vem junto: é preciso ter a sua própria cópia do pacote (veja o README).
@@ -39,6 +23,16 @@ Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windo
 - **Playlist própria**: toque suas músicas durante o jogo (a música original fica muda), com ordem aleatória e volume.
 
 ### Launcher
+- **Prepara o jogo sozinho**: ao apertar JOGAR (ou ao escolher a pasta do jogo), basta apontar a sua cópia, ou seja, o pacote extraído com `Mount` e `EmbeddedXvd`. O launcher:
+  - copia o executável e os arquivos pequenos (~60 MB) para a pasta dele;
+  - liga `dat` e `EmbeddedXvd` como atalhos para a sua cópia;
+  - cria o `onrush-pc.exe` (o jogo aparece como ONRUSH™ no Gerenciador de Tarefas).
+  A sua cópia não é alterada. Também pela linha de comando: `-setup "<pasta da cópia>"`.
+- **Shaders traduzidos sozinhos**, sem Python nem Windows SDK: o tradutor vem junto (`translator\`).
+  - Na primeira vez, o JOGAR abre o jogo algumas vezes, em uma janela pequena e sem som, para ele gravar os shaders que usa; o launcher traduz tudo e só então abre o jogo de verdade.
+  - Os shaders novos (pistas e menus que você ainda não tinha visitado) são traduzidos quando o jogo fecha, ou no próximo JOGAR.
+  - Cerca de 120 shaders de computação levam de 3 s a 1 min cada para compilar. Eles são compilados primeiro no modo rápido, e a primeira preparação cai de mais de 10 minutos para poucos minutos. A versão otimizada é feita quando o jogo fecha, e dá para pular: continua na vez seguinte.
+  - Usa no máximo 8 processos de compilação, limitado pela memória livre.
 - Resolução, modo de tela (sem bordas, janela ou tela cheia) e VSync.
 - Launcher em português, inglês ou espanhol; idioma do texto e da voz do jogo escolhidos separadamente.
 - Opção de pular a introdução (tela legal e logos): título em ~2 s.
@@ -46,9 +40,9 @@ Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windo
 - Modo foto: **F12** salva a imagem sem HUD em PNG ou JPG.
 - Discord Rich Presence.
 - Aba **Playlist**: criar, renomear e excluir playlists; arrastar músicas e pastas; reordenar; pesquisar; ouvir a prévia.
-- "Preparando shaders" ao apertar JOGAR, com barra de progresso e botão para pular.
+- "Preparando shaders" ao apertar JOGAR, com barra de progresso e botão para pular: tradução, compilação e cache de pipelines.
 - Log embutido (ver, copiar, limpar), e o jogo abre sem janela de console.
-- **Verificar atualizações**: avisa quando há uma versão nova aqui no GitHub e abre a página da release.
+- **Atualização automática**: o launcher avisa quando há uma versão nova aqui no GitHub. Se você aceitar, ele baixa o zip, confere o SHA-256, fecha, atualiza a própria pasta e abre de novo. Configurações, saves e shaders são mantidos.
 
 ### Estabilidade
 - Corrigidos travamentos da GPU por despachos e draws indiretos inválidos (partículas).
@@ -62,4 +56,4 @@ Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windo
 - Nuvens, poeira na lente (lens dust) e o splash de água dos carros ainda não aparecem.
 - Crash ocasional depois do fim de uma corrida.
 - Online, multiplayer e cosméticos que dependem do servidor não estão disponíveis.
-- A primeira execução de cada pista grava shaders novos. Rode `prepare_shaders.ps1` depois de jogar para traduzi-los (os de tesselação precisam de uma segunda passada).
+- Pistas novas podem aparecer com objetos faltando até o jogo ser fechado e os shaders delas serem traduzidos.

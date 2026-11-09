@@ -62,7 +62,9 @@ def hs_pc1(ds_path):
 def translate(src, env):
     out = os.path.join(os.environ.get('TEMP', '.'), 'tess_tmp_%d.hlsl' % os.getpid())
     e = dict(os.environ); e.update(env)
-    r = subprocess.run([sys.executable, '-I', os.path.join(HERE, 'gcn2hlsl.py'), src, out], env=e, capture_output=True, text=True)
+    # packaged translator (PyInstaller): the exe itself runs gcn2hlsl with --gcn2hlsl
+    cmd = [sys.executable, '--gcn2hlsl', src, out] if getattr(sys, 'frozen', False) else [sys.executable, '-I', os.path.join(HERE, 'gcn2hlsl.py'), src, out]
+    r = subprocess.run(cmd, env=e, capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     if not os.path.exists(out): raise RuntimeError('translate failed: ' + (r.stderr or r.stdout)[-400:])
     t = open(out, encoding='utf-8').read(); os.remove(out)
     if '// TODO' in t: raise RuntimeError('TODO left: ' + ' | '.join(l.strip() for l in t.splitlines() if '// TODO' in l)[:400])
@@ -128,24 +130,31 @@ def build(game, vs_h, ds_path):
     text = '\n'.join(src) + '\n'
     return text, sm6
 
-def main():
-    game = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', '..', 'dist_game')
+def run(game, skip_existing=False, log=print, cancelled=lambda: False):
     tdir = os.path.join(game, 'shaders', 'translated')
+    os.makedirs(tdir, exist_ok=True)
     ok = fail = 0
     for ds_path in sorted(glob.glob(os.path.join(game, 'shaders', 'tess', 'vs*_ds*.dxbc'))):
         m = re.search(r'vs([0-9a-f]{16})_ds([0-9a-f]{16})\.dxbc$', ds_path)
         vs_h, ds_h = m.groups()
         base = os.path.join(tdir, 'tess_%s_%s' % (vs_h, ds_h))
+        if skip_existing and os.path.exists(base + '.dxil.cso'): continue
+        if cancelled(): break
         try:
             text, sm6 = build(game, vs_h, ds_path)
             open(base + '.hlsl', 'w', encoding='utf-8').write(text)
             d = hlslc.compile_to_bytes(b'// sm6\n' + text.encode(), 'vs_6_0')
             if not d: raise RuntimeError('dxc compile failed: ' + hlslc._dxc(SM6 + text.encode(), 'vs_6_0')[1][-300:])
-            open(base + '.dxil.cso', 'wb').write(d)
-            print('ok  ', vs_h, ds_h, len(d)); ok += 1
+            with open(base + '.dxil.cso.tmp', 'wb') as fh: fh.write(d)
+            os.replace(base + '.dxil.cso.tmp', base + '.dxil.cso')
+            log('ok   %s %s %d' % (vs_h, ds_h, len(d))); ok += 1
         except Exception as e:
-            print('FAIL', vs_h, ds_h, str(e)[:300]); fail += 1
-    print('done ok=%d fail=%d' % (ok, fail))
+            log('FAIL %s %s %s' % (vs_h, ds_h, str(e)[:300])); fail += 1
+    log('done ok=%d fail=%d' % (ok, fail))
+    return ok, fail
+
+def main():
+    run(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', '..', 'dist_game'))
 
 if __name__ == '__main__':
     main()

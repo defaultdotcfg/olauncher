@@ -1,4 +1,4 @@
-# Pushing a tag vX.Y.Z builds the port and publishes a GitHub release with the binaries.
+# Pushing a tag vX.Y.Z builds the port and the shader translator and publishes a GitHub release with them.
 # The launcher's update check compares that tag with OLAUNCHER_VERSION (src/launcher/version.h).
 name: release
 
@@ -26,12 +26,32 @@ jobs:
         shell: pwsh
         run: ./scripts/build.ps1
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Build translator
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller==6.22.3
+          # DXC 1.8.2502 (same version as Windows SDK 10.0.26100), official release, pinned by hash
+          Invoke-WebRequest https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2502/dxc_2025_02_20.zip -OutFile dxc.zip
+          if ((Get-FileHash dxc.zip -Algorithm SHA256).Hash -ne '70B1913A1BFCE4A3E1A5311D16246F4ECDF3A3E613ABEC8AA529E57668426F85') { throw 'dxc.zip hash mismatch' }
+          Expand-Archive dxc.zip -DestinationPath dxc
+          ./scripts/build_translator.ps1 -Src scripts/translator -Out bin -DxcDir dxc/bin/x64
+          # smoke test: an empty game folder must finish cleanly
+          New-Item -ItemType Directory -Force smoke/shaders | Out-Null
+          $o = & bin/translator/olauncher-translator.exe smoke --version test
+          $o
+          if (-not ($o -match '^DONE ')) { throw 'translator smoke test failed' }
+
       - name: Package
         shell: pwsh
         run: |
           $pkg = "olauncher-${{ github.ref_name }}"
           New-Item -ItemType Directory -Force "$pkg/scripts/translator" | Out-Null
           Copy-Item bin/OnRushLauncher.exe, bin/kernelx.dll, bin/combase.dll, bin/EtwPlus.dll, bin/MMDevAPI.dll, bin/d3d12_x.dll $pkg
+          Copy-Item bin/translator "$pkg/translator" -Recurse
           Copy-Item scripts/stage.ps1, scripts/brand_exe.py "$pkg/scripts"
           Copy-Item scripts/translator/* "$pkg/scripts/translator"
           Copy-Item README.md, LICENSE, THIRD_PARTY.md $pkg

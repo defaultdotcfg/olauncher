@@ -1,8 +1,8 @@
 // ============================================================================
 // Launcher update check: asks GitHub for the latest release of defaultdotcfg/olauncher
 // and compares its tag (vX.Y.Z) with OLAUNCHER_VERSION. Runs on a worker thread and
-// posts WM_UPDATE_RESULT back to the main window. Nothing is downloaded or installed:
-// when a newer release exists the user is offered to open its page in the browser.
+// posts WM_UPDATE_RESULT back to the main window. When a newer release exists the user is offered
+// to install it (self_update.inc), or to open its page when the release has no usable zip.
 // ============================================================================
 #include <string>
 #include <winhttp.h>
@@ -21,6 +21,8 @@ struct UpdateResult
     HWND notify;               // window that receives WM_UPDATE_RESULT
     wchar_t tag[64];           // release tag, e.g. v0.2.0
     wchar_t url[512];          // release page (only github.com/defaultdotcfg/olauncher/...)
+    wchar_t asset[512];        // release zip (only github.com/defaultdotcfg/olauncher/releases/download/...)
+    char sha256[65];           // the zip's SHA-256 as published by GitHub ("digest": "sha256:...")
     wchar_t error[128];
 };
 
@@ -92,6 +94,23 @@ static DWORD WINAPI UpdateCheckThread(LPVOID param)
             // only ever open pages of this repository
             if (!JsonFindString(body, "html_url", r->url, 512) || wcsncmp(r->url, OLAUNCHER_RELEASES L"/", wcslen(OLAUNCHER_RELEASES) + 1) != 0)
                 wcscpy_s(r->url, 512, OLAUNCHER_RELEASES L"/latest");
+            // release zip + its digest (for the automatic update)
+            size_t a = body.find("\"browser_download_url\"");
+            if (a != std::string::npos)
+            {
+                std::string asset = body.substr(a);
+                wchar_t dig[96] = {};
+                if (JsonFindString(asset, "browser_download_url", r->asset, 512) &&
+                    (wcsncmp(r->asset, OLAUNCHER_RELEASES L"/download/", wcslen(OLAUNCHER_RELEASES L"/download/")) != 0 ||
+                     wcslen(r->asset) < 5 || _wcsicmp(r->asset + wcslen(r->asset) - 4, L".zip") != 0))
+                    r->asset[0] = 0;
+                // "digest" belongs to the same asset object: look for it before the next asset starts
+                size_t next = asset.find("\"browser_download_url\"", 1);
+                size_t d = body.rfind("\"digest\"", a + (next == std::string::npos ? asset.size() : next));
+                if (d != std::string::npos && JsonFindString(body.substr(d), "digest", dig, 96) && !wcsncmp(dig, L"sha256:", 7) && wcslen(dig) == 71)
+                    for (int i = 0; i < 64; ++i) r->sha256[i] = (char)towlower(dig[7 + i]);
+                if (!r->sha256[0]) r->asset[0] = 0;
+            }
             r->status = CompareVersions(r->tag, OLAUNCHER_VERSION) > 0 ? UPD_NEWER : UPD_LATEST;
         }
         else swprintf_s(r->error, 128, L"HTTP %lu", code);

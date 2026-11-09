@@ -16,6 +16,7 @@
 #include <shobjidl.h>
 #include "discord_rpc.inc"
 #include "update_check.inc"
+#include "self_update.inc"
 #define ID_BTN_UPDATE     1030
 static HWND g_hBtnUpdate = nullptr;
 
@@ -59,7 +60,7 @@ enum UiStr {
     S_RUNNING, S_READY, S_NOTFOUND, S_VERSION, S_MODE_BORDERLESS, S_MODE_WINDOW, S_MODE_FULL, S_LANG_SYSTEM,
     S_LANG_SAME, S_PICK_GAME, S_BAD_DIR, S_NO_GAME, S_PICK_SAVE, S_PLAYER, S_PHOTO, S_PHOTO_PNG, S_PHOTO_JPG,
     S_UPD_CHECK, S_UPD_CHECKING, S_UPD_AVAIL, S_UPD_LATEST, S_UPD_FAIL, S_UPD_NONE, S_UPD_ASK,
-    S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_COUNT
+    S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -127,6 +128,14 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"A pasta do launcher não tem os arquivos do port (d3d12_x.dll e outros).\nExtraia o zip da release inteiro e abra o launcher de dentro dele.",
       L"The launcher folder is missing the port files (d3d12_x.dll and others).\nExtract the whole release zip and run the launcher from it.",
       L"La carpeta del launcher no tiene los archivos del port (d3d12_x.dll y otros).\nExtrae el zip completo de la release y abre el launcher desde ahí." },
+    { L"Nova versão do launcher disponível: %ls (atual: v%ls).\n\nBaixar e instalar agora? O launcher fecha, atualiza a pasta dele e abre de novo sozinho. Suas configurações, saves e shaders são mantidos.",
+      L"A new launcher version is available: %ls (current: v%ls).\n\nDownload and install it now? The launcher closes, updates its folder and opens again by itself. Your settings, saves and shaders are kept.",
+      L"Hay una nueva versión del launcher: %ls (actual: v%ls).\n\n¿Descargar e instalar ahora? El launcher se cierra, actualiza su carpeta y se abre de nuevo solo. Tu configuración, partidas guardadas y shaders se mantienen." },
+    { L"Baixando… %d%%", L"Downloading… %d%%", L"Descargando… %d%%" },
+    { L"Feche o jogo antes de atualizar o launcher.", L"Close the game before updating the launcher.", L"Cierra el juego antes de actualizar el launcher." },
+    { L"Não foi possível baixar a atualização (%ls).\n\nAbrir a página da versão no GitHub?",
+      L"Could not download the update (%ls).\n\nOpen the release page on GitHub?",
+      L"No se pudo descargar la actualización (%ls).\n\n¿Abrir la página de la versión en GitHub?" },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
 
@@ -515,7 +524,8 @@ static void UpdateButtonText()
 {
     if (!g_hBtnUpdate) return;
     wchar_t t[96];
-    if (g_updateChecking) wcscpy_s(t, T(S_UPD_CHECKING));
+    if (g_updateDownloading) swprintf_s(t, 96, T(S_UPD_DL), g_updatePercent);
+    else if (g_updateChecking) wcscpy_s(t, T(S_UPD_CHECKING));
     else if (g_updateKnown && g_updateLast.status == UPD_NEWER) swprintf_s(t, 96, T(S_UPD_AVAIL), g_updateLast.tag);
     else wcscpy_s(t, T(S_UPD_CHECK));
     SetWindowTextW(g_hBtnUpdate, t);
@@ -563,6 +573,40 @@ static void ApplyUiLanguage(HWND hwnd)
 }
 
 #include "shader_prep.inc"
+
+// ---- first run: the game records the shaders it uses only when it runs, and without translations it stops
+// at the first screens. JOGAR on a new install therefore runs it a few times on its own ("warm-up"): each
+// round lets it record shaders until nothing new shows up for a while, closes it, translates, and repeats.
+#define TIMER_WARMUP      0x7701
+#define WARMUP_MAX_ROUNDS 3
+static int g_warmRound = 0;           // > 0 while warming up
+static int g_warmDumpsBefore = 0, g_warmLastCount = 0;
+static ULONGLONG g_warmStart = 0, g_warmLastChange = 0;
+static bool g_warmKilled = false, g_warmNewDumps = false;
+static bool g_prepLaunch = true;      // start the game when the preparation finishes
+
+static void BeginWarmupRound(HWND hwnd)
+{
+    g_warmRound++;
+    g_warmDumpsBefore = g_warmLastCount = PrepCountDumps(g_gameDirShown);
+    g_warmStart = g_warmLastChange = GetTickCount64();
+    g_warmKilled = false;
+    LogPrintf(L"[Shaders] primeira execução: rodada %d de coleta de shaders (%d gravados até agora)\r\n", g_warmRound, g_warmDumpsBefore);
+    StartShaderPrep(hwnd, g_gameDirShown, g_warmRound);
+    g_prep->done = g_warmLastCount;
+    g_warmupLaunch = true;
+    g_hWorkerThread = CreateThread(nullptr, 0, GameSupervisorThread, &g_config, 0, nullptr);
+    SetTimer(hwnd, TIMER_WARMUP, 500, nullptr);
+}
+
+// preparation (translate -> compile -> pipelines); WM_SHADER_PREP_DONE starts the game if launch is set
+static void BeginShaderPrep(HWND hwnd, bool launch)
+{
+    g_prepLaunch = launch;
+    EnableWindow(g_hBtnLaunch, FALSE);
+    SetWindowTextW(g_hBtnLaunch, T(S_PREP));
+    StartShaderPrep(hwnd, g_gameDirShown, 0, !launch);  // after the game closed there is time to optimize
+}
 
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -687,6 +731,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(ID_BTN_LAUNCH, 0), 0);
         else if (!wcsstr(GetCommandLineW(), L"-noupdatecheck"))
         {
+            if (wcsstr(GetCommandLineW(), L"-updated"))
+            {   // just installed by the updater: say so and remove its temp folder
+                LogPrintf(L"[Atualização] launcher atualizado para v%ls\r\n", OLAUNCHER_VERSION);
+                CloseHandle(CreateThread(nullptr, 0, UpdateCleanupThread, nullptr, 0, nullptr));
+            }
             StartUpdateCheck(hwnd, false);  // silent: only highlights the button when a newer release exists
             UpdateButtonText();
         }
@@ -720,6 +769,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     case WM_GAME_STARTED:
         g_gameRunning = true;
         SetLaunchButtonState();
+        if (g_warmRound) { EnableWindow(g_hBtnLaunch, FALSE); SetWindowTextW(g_hBtnLaunch, T(S_PREP)); return 0; }
         if (g_discordOn)
         {
             bool ok = g_discord.Connect(g_discordAppId) && g_discord.SetPlaying((long long)time(nullptr));
@@ -728,11 +778,38 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
 
     case WM_SHADER_PREP_DONE:
+        if (g_warmRound)
+        {
+            bool skipped = g_prep && g_prep->cancel;
+            if (!skipped && g_warmNewDumps && g_warmRound < WARMUP_MAX_ROUNDS) { BeginWarmupRound(hwnd); return 0; }
+            LogPrintf(L"[Shaders] primeira execução concluída (%d rodada(s))\r\n", g_warmRound);
+            g_warmRound = 0;
+        }
         EnableWindow(g_hBtnLaunch, TRUE);
         SetLaunchButtonState();
         if (wcsstr(GetCommandLineW(), L"-prepshaders")) { DestroyWindow(hwnd); return 0; }  // prepare only, don't start the game
+        if (!g_prepLaunch) return 0;  // translation after the game closed: nothing else to do
         g_hWorkerThread = CreateThread(nullptr, 0, GameSupervisorThread, &g_config, 0, nullptr);
         return 0;
+
+    case WM_TIMER:
+        if (wParam == TIMER_WARMUP)
+        {
+            if (!g_warmRound) { KillTimer(hwnd, TIMER_WARMUP); return 0; }
+            ULONGLONG now = GetTickCount64();
+            int n = PrepCountDumps(g_gameDirShown);
+            if (n != g_warmLastCount) { g_warmLastCount = n; g_warmLastChange = now; }
+            if (g_prep && g_prep->warmup) g_prep->done = n;
+            bool skip = g_prep && g_prep->warmup && g_prep->cancel;
+            // enough: nothing new for 10 s (after at least 20 s), 2 minutes in total, or "Pular"
+            if (g_hGameProcess && !g_warmKilled && (skip || (now - g_warmStart > 20000 && now - g_warmLastChange > 10000) || now - g_warmStart > 120000))
+            {
+                g_warmKilled = true;
+                TerminateProcess(g_hGameProcess, 0);
+            }
+            return 0;
+        }
+        break;
 
     case WM_UPDATE_RESULT:
     {
@@ -749,7 +826,17 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             LogPrintf(L"[Atualização] Nova versão do launcher: %ls (atual v%ls) — %ls\r\n", r->tag, OLAUNCHER_VERSION, r->url);
         if (r->manual)
         {
-            if (r->status == UPD_NEWER)
+            if (r->status == UPD_NEWER && r->asset[0] && r->sha256[0])
+            {   // automatic update: download, close, install, reopen
+                swprintf_s(msgText, 512, T(S_UPD_ASK_INSTALL), r->tag, OLAUNCHER_VERSION);
+                if (MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_YESNO | MB_ICONINFORMATION) == IDYES)
+                {
+                    if (g_gameRunning || g_hPrepWnd || g_warmRound) MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"ONRUSH Launcher", MB_ICONINFORMATION);
+                    else if (StartUpdateDownload(hwnd, *r)) LogPrintf(L"[Atualização] baixando %ls…\r\n", r->asset);
+                    UpdateButtonText();
+                }
+            }
+            else if (r->status == UPD_NEWER)
             {
                 swprintf_s(msgText, 512, T(S_UPD_ASK), r->tag, OLAUNCHER_VERSION);
                 if (MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_YESNO | MB_ICONINFORMATION) == IDYES)
@@ -763,11 +850,69 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
     }
 
+    case WM_UPDATE_PROGRESS:
+        g_updatePercent = (int)wParam;
+        UpdateButtonText();
+        return 0;
+
+    case WM_UPDATE_READY:
+    {
+        UpdateJob *job = (UpdateJob *)lParam;
+        g_updateDownloading = false;
+        UpdateButtonText();
+        wchar_t msgText[512], err[160] = {};
+        if (job->ok && (g_gameRunning || g_hPrepWnd || g_warmRound))
+            MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"ONRUSH Launcher", MB_ICONINFORMATION);
+        else if (job->ok && LaunchUpdateInstaller(job, err, 160))
+        {
+            LogPrintf(L"[Atualização] %ls baixada e conferida; o launcher fecha para instalar\r\n", job->tag);
+            ReadUiIntoConfig();
+            SaveIni();
+            delete job;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        else
+        {
+            const wchar_t *why = job->ok ? err : job->error;
+            LogPrintf(L"[Atualização] falhou: %ls\r\n", why);
+            swprintf_s(msgText, 512, T(S_UPD_DLFAIL), why);
+            if (MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_YESNO | MB_ICONWARNING) == IDYES)
+                ShellExecuteW(hwnd, L"open", g_updateLast.url[0] ? g_updateLast.url : OLAUNCHER_RELEASES L"/latest", nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        delete job;
+        return 0;
+    }
+
     case WM_GAME_EXITED:
         g_gameRunning = false;
+        if (g_warmRound)
+        {   // end of a warm-up round: translate what it recorded (the next round or the game starts afterwards)
+            KillTimer(hwnd, TIMER_WARMUP);
+            g_warmupLaunch = false;
+            bool skipped = g_prep && g_prep->warmup && g_prep->cancel;
+            int n = PrepCountDumps(g_gameDirShown);
+            g_warmNewDumps = n > g_warmDumpsBefore;
+            LogPrintf(L"[Shaders] rodada %d: %d shader(s) novo(s) gravado(s)%ls\r\n", g_warmRound, n - g_warmDumpsBefore, skipped ? L" (pulado)" : L"");
+            if (g_hPrepWnd) DestroyWindow(g_hPrepWnd);
+            if (skipped) g_warmNewDumps = false;  // no more rounds; still prepare what was recorded (can be skipped too)
+            BeginShaderPrep(hwnd, true);
+            return 0;
+        }
         SetLaunchButtonState();
         g_discord.Clear();
         g_discord.Close();
+        // shaders recorded during this session get translated now, so the next JOGAR starts right away
+        {
+            wchar_t tr[MAX_PATH];
+            bool fresh = PrepTranslationNeeded(g_gameDirShown);
+            if (!g_hPrepWnd && PrepTranslatorExe(tr) && (fresh || PrepHasUnoptimized(g_gameDirShown)) && !wcsstr(GetCommandLineW(), L"-autolaunch"))
+            {
+                LogPrintf(fresh ? L"[Shaders] o jogo gravou shaders novos: traduzindo para a próxima vez\r\n"
+                                : L"[Shaders] otimizando shaders de computação (pode pular)\r\n");
+                BeginShaderPrep(hwnd, false);
+            }
+        }
         return 0;
 
     case WM_COMMAND:
@@ -801,11 +946,21 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
             if (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") && FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") && BrandGameExe(g_gameDirShown))
                 LogPrintf(L"[Setup] onrush-pc.exe criado a partir de game_release_xbox.exe\r\n");
-            if (g_hPrepWnd) return 0;  // already preparing
+            if (g_hPrepWnd || g_warmRound) return 0;  // already preparing
+            {
+                wchar_t tr[MAX_PATH];
+                if (PrepIsFreshInstall(g_gameDirShown) && PrepTranslatorExe(tr) && !wcsstr(GetCommandLineW(), L"-prepshaders") &&
+                    !wcsstr(GetCommandLineW(), L"-nowarmup"))
+                {   // new install: let the game record its shaders first (popup + a few short runs)
+                    EnableWindow(g_hBtnLaunch, FALSE);
+                    SetWindowTextW(g_hBtnLaunch, T(S_PREP));
+                    g_prepLaunch = true;
+                    BeginWarmupRound(hwnd);
+                    return 0;
+                }
+            }
             // shader/pipeline preparation first (popup with progress); the game starts on WM_SHADER_PREP_DONE
-            EnableWindow(g_hBtnLaunch, FALSE);
-            SetWindowTextW(g_hBtnLaunch, T(S_PREP));
-            StartShaderPrep(hwnd, g_gameDirShown);
+            BeginShaderPrep(hwnd, true);
             return 0;
         case ID_VSYNC_CHK: g_vsyncOn = !g_vsyncOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_DISCORD_CHK:
@@ -957,6 +1112,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
 {
+    if (wcsstr(GetCommandLineW(), L"-applyupdate")) return RunApplyUpdate();  // the updater copy (self_update.inc)
     GetModuleFileNameW(nullptr, g_exeDir, MAX_PATH);
     wchar_t *lastSlash = wcsrchr(g_exeDir, L'\\');
     if (lastSlash) *lastSlash = L'\0';
