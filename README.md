@@ -1,4 +1,4 @@
-# olauncher — ONRUSH PC Native Port
+# olauncher — Port para PC de ONRUSH™
 
 Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.64980.34)** nativamente no Windows x64 com Direct3D 12.
 
@@ -77,21 +77,6 @@ O launcher consulta `https://api.github.com/repos/defaultdotcfg/olauncher/releas
 `src/d3d12_x` deriva do [WinDurango](https://github.com/WinDurango/WinDurango) (LGPL-3.0), e `src/kernelx`, `src/combase` e `src/EtwPlus` derivam do SlimEra da XWine1 (MIT). O projeto é distribuído sob **GPL-3.0** (`LICENSE`), compatível com as duas. Veja `THIRD_PARTY.md`.
 
 ONRUSH é marca da Codemasters/Electronic Arts. Este projeto não é afiliado nem endossado por elas e não distribui conteúdo do jogo.
-
-## Histórico
-
-Texto original do repositório, do começo do projeto (antes do primeiro render):
-
-A WIP OnRush PC port for Windows
-
-This is just a repository. The port is on earlier stages and I don't have any prediction of a playable state yet. 
-For now, I did what I tought it was impossible: get the first render.
-
-The port is getting build using XWine, XDLCompiler and Windurango. Azimuth Launcher was used only for research.
-
-Note: the entire project was built using Antigravity IDE, using Gemini 3.8 Flash model.
-
-<img width="1919" height="1079" alt="ima1ge" src="https://github.com/user-attachments/assets/080503c2-f734-4f27-b633-1d1c3e73f683" />
 
 ---
 
