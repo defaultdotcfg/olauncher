@@ -137,7 +137,7 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->gamePath[0] = L'\0';
     wcscpy_s(cfg->savePath, MAX_PATH, L".\\save");
     cfg->diagnostics = 1;
-    cfg->verboseLog = 1;
+    cfg->verboseLog = 0;  // debug option "frame captures" (ini key FrameDumps)
     cfg->d3d12Debug = 0;
     cfg->autoRestart = 0;
     cfg->quickGameplay = 0;
@@ -169,7 +169,7 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     GetPrivateProfileStringW(L"System", L"GamePath", cfg->gamePath, cfg->gamePath, MAX_PATH, iniPath);
     GetPrivateProfileStringW(L"System", L"SavePath", cfg->savePath, cfg->savePath, MAX_PATH, iniPath);
     cfg->diagnostics = GetPrivateProfileIntW(L"System", L"Diagnostics", cfg->diagnostics, iniPath);
-    cfg->verboseLog = GetPrivateProfileIntW(L"System", L"VerboseLog", cfg->verboseLog, iniPath);
+    cfg->verboseLog = GetPrivateProfileIntW(L"System", L"FrameDumps", cfg->verboseLog, iniPath);
     cfg->d3d12Debug = GetPrivateProfileIntW(L"Graphics", L"D3D12Debug", cfg->d3d12Debug, iniPath);
     cfg->quickGameplay = GetPrivateProfileIntW(L"System", L"QuickGameplay", cfg->quickGameplay, iniPath);
     cfg->skipIntro = GetPrivateProfileIntW(L"System", L"SkipIntro", cfg->skipIntro, iniPath);
@@ -209,7 +209,8 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
     WritePrivateProfileStringW(L"System", L"Diagnostics", buf, iniPath);
 
     swprintf_s(buf, 64, L"%d", cfg->verboseLog);
-    WritePrivateProfileStringW(L"System", L"VerboseLog", buf, iniPath);
+    WritePrivateProfileStringW(L"System", L"FrameDumps", buf, iniPath);
+    WritePrivateProfileStringW(L"System", L"VerboseLog", nullptr, iniPath);  // old key (was always 1, unused)
 
     swprintf_s(buf, 64, L"%d", cfg->d3d12Debug);
     WritePrivateProfileStringW(L"Graphics", L"D3D12Debug", buf, iniPath);
@@ -434,6 +435,8 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 
     swprintf_s(envBuf, 64, L"%d", cfg->d3d12Debug);
     SetEnvironmentVariableW(L"ONRUSH_D3D12_DEBUG", envBuf);
+    // debug: periodic frame_*.bmp captures in the game folder
+    SetEnvironmentVariableW(L"ONRUSH_FRAME_DUMPS", cfg->verboseLog ? L"1" : nullptr);
 
     // Quick test mode (launcher option or "OnRushLauncher.exe -gameplay"): the bridge skips the boot screens.
     {

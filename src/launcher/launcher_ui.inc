@@ -74,7 +74,7 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Pular introdução (tela legal e logos)", L"Skip intro (legal screen and logos)", L"Omitir introducción (aviso legal y logos)" },
     { L"Opções avançadas", L"Advanced options", L"Opciones avanzadas" },
     { L"Camada de depuração do Direct3D 12", L"Direct3D 12 debug layer", L"Capa de depuración de Direct3D 12" },
-    { L"Logs detalhados da bridge", L"Verbose bridge logs", L"Registros detallados del bridge" },
+    { L"Capturas de quadros (depuração, BMP)", L"Frame captures (debug, BMP)", L"Capturas de fotogramas (depuración, BMP)" },
     { L"Ir direto para o gameplay (teste)", L"Go straight to gameplay (test)", L"Ir directo a la partida (prueba)" },
     { L"JOGAR", L"PLAY", L"JUGAR" },
     { L"FECHAR JOGO", L"CLOSE GAME", L"CERRAR JUEGO" },

@@ -960,12 +960,22 @@ static void ToggleBorderlessFullscreen(HWND hwnd) {
 
 // Called every Present: the window may be owned by a thread that never pumps messages, so
 // Alt+Enter is detected from the keyboard state (only while the game window has focus).
+// Alt+F4 / window close button: the Xbox game has no "quit" of its own (the console just suspends it),
+// so the process ends here with exit code 0 (the launcher treats it as a normal exit).
+static void QuitGameFromWindow(const char *why) {
+  log_line("[window] %s -> closing the game\r\n", why);
+  TerminateProcess(GetCurrentProcess(), 0);
+}
+
 static void PollAltEnterToggle() {
   static bool s_wasDown = false;
   if (!g_desktopHwnd) return;
   HWND fg = GetForegroundWindow();
   DWORD pid = 0;
   if (fg) GetWindowThreadProcessId(fg, &pid);
+  // Alt+F4 also from the keyboard state: the window's own thread may never see the key message
+  if (pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_MENU) & 0x8000) && (GetAsyncKeyState(VK_F4) & 0x8000))
+    QuitGameFromWindow("Alt+F4");
   bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_MENU) & 0x8000) && (GetAsyncKeyState(VK_RETURN) & 0x8000);
   if (down && !s_wasDown) {
     ToggleBorderlessFullscreen(g_desktopHwnd);
@@ -999,8 +1009,8 @@ static LRESULT CALLBACK DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wParam,
     EndPaint(hwnd, &ps);
     return 0;
   }
-  case WM_CLOSE:
-    PostQuitMessage(0);
+  case WM_CLOSE:  // Alt+F4 (DefWindowProc) or the title bar's close button
+    QuitGameFromWindow("WM_CLOSE");
     return 0;
   case WM_DESTROY:
     return 0;
@@ -12032,7 +12042,11 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
     if (s_drStart == -2) { char rb[32] = {}; s_drStart = -1;
       if (GetEnvironmentVariableA("ONRUSH_DUMP_RANGE", rb, sizeof(rb)) > 0) sscanf_s(rb, "%ld:%ld", &s_drStart, &s_drCount); }
     const bool inDumpRange = s_drStart >= 0 && frame_count >= s_drStart && frame_count < s_drStart + s_drCount;
-    if (inDumpRange || frame_count == 10 || frame_count == 60 || frame_count == 125 || frame_count == 150 || frame_count == 245 || frame_count == 270 || (frame_count % 300 == 0)) {
+    // Periodic frame captures (frame_*.bmp, ~8 MB each, stall the GPU): only with the launcher's debug
+    // option "Capturas de quadros" (ONRUSH_FRAME_DUMPS=1).
+    static int s_frameDumps = -1;
+    if (s_frameDumps < 0) s_frameDumps = InputEnvFlag("ONRUSH_FRAME_DUMPS") ? 1 : 0;
+    if (inDumpRange || s_frameDumps && (frame_count == 10|| frame_count == 60 || frame_count == 125 || frame_count == 150 || frame_count == 245 || frame_count == 270 || (frame_count % 300 == 0))) {
       if (pCurrentBackBuffer) {
         DumpBackBufferDiagnostic(pCurrentBackBuffer, frame_count, "backbuffer");
       }

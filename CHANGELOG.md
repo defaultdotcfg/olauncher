@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.1
+
+- **Alt+F4 e o botão de fechar da janela agora fecham o jogo.** Antes o pedido era ignorado e só dava para sair pelo launcher.
+- **Capturas de quadros desligadas por padrão.** A v0.1.0 salvava imagens `frame_*.bmp` (~8 MB cada) na pasta do jogo a cada ~5 segundos de jogo, o que também causava pequenos travamentos. Agora elas só são geradas com a opção de depuração **Opções avançadas → Capturas de quadros (depuração, BMP)**. Os arquivos `frame_*.bmp` que a v0.1.0 deixou na pasta do jogo podem ser apagados.
+- A opção "Logs detalhados da bridge" (que não tinha efeito) deu lugar à opção de capturas.
+
 ## v0.1.0 — primeira versão pública
 
 Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windows x64 com Direct3D 12. Nenhum arquivo do jogo vem junto: é preciso ter a sua própria cópia do pacote (veja o README).
