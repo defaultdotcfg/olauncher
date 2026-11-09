@@ -58,7 +58,8 @@ enum UiStr {
     S_VERBOSE, S_GAMEPLAY, S_PLAY, S_CLOSE, S_PREP, S_BTN_GAME, S_BTN_SAVES, S_SHOWLOG, S_HIDELOG, S_CLEAR, S_COPY,
     S_RUNNING, S_READY, S_NOTFOUND, S_VERSION, S_MODE_BORDERLESS, S_MODE_WINDOW, S_MODE_FULL, S_LANG_SYSTEM,
     S_LANG_SAME, S_PICK_GAME, S_BAD_DIR, S_NO_GAME, S_PICK_SAVE, S_PLAYER, S_PHOTO, S_PHOTO_PNG, S_PHOTO_JPG,
-    S_UPD_CHECK, S_UPD_CHECKING, S_UPD_AVAIL, S_UPD_LATEST, S_UPD_FAIL, S_UPD_NONE, S_UPD_ASK, S_COUNT
+    S_UPD_CHECK, S_UPD_CHECKING, S_UPD_AVAIL, S_UPD_LATEST, S_UPD_FAIL, S_UPD_NONE, S_UPD_ASK,
+    S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -93,14 +94,15 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Tela cheia", L"Fullscreen", L"Pantalla completa" },
     { L"Automático (sistema)", L"Automatic (system)", L"Automático (sistema)" },
     { L"Igual ao texto", L"Same as text", L"Igual que el texto" },
-    { L"Selecione a pasta do jogo (a que contém onrush-pc.exe)", L"Select the game folder (the one with onrush-pc.exe)",
-      L"Selecciona la carpeta del juego (la que contiene onrush-pc.exe)" },
-    { L"Essa pasta não contém o ONRUSH (onrush-pc.exe ou game_release_xbox.exe).\nEscolher outra pasta?",
-      L"This folder does not contain ONRUSH (onrush-pc.exe or game_release_xbox.exe).\nChoose another folder?",
-      L"Esta carpeta no contiene ONRUSH (onrush-pc.exe o game_release_xbox.exe).\n¿Elegir otra carpeta?" },
-    { L"Não encontrei o jogo na pasta configurada.\nSelecione a pasta que contém onrush-pc.exe.",
-      L"The game was not found in the configured folder.\nSelect the folder that contains onrush-pc.exe.",
-      L"No se encontró el juego en la carpeta configurada.\nSelecciona la carpeta que contiene onrush-pc.exe." },
+    { L"Selecione a sua cópia do ONRUSH (a pasta do pacote extraído, com Mount e EmbeddedXvd)",
+      L"Select your copy of ONRUSH (the extracted package folder, with Mount and EmbeddedXvd)",
+      L"Selecciona tu copia de ONRUSH (la carpeta del paquete extraído, con Mount y EmbeddedXvd)" },
+    { L"Essa pasta não tem o ONRUSH (game_release_xbox.exe, direto ou em Mount\\).\nEscolher outra pasta?",
+      L"This folder does not contain ONRUSH (game_release_xbox.exe, directly or in Mount\\).\nChoose another folder?",
+      L"Esta carpeta no contiene ONRUSH (game_release_xbox.exe, directo o en Mount\\).\n¿Elegir otra carpeta?" },
+    { L"O jogo ainda não está preparado.\nSelecione a pasta da sua cópia do ONRUSH (o pacote extraído, com Mount e EmbeddedXvd).",
+      L"The game is not set up yet.\nSelect the folder of your copy of ONRUSH (the extracted package, with Mount and EmbeddedXvd).",
+      L"El juego aún no está preparado.\nSelecciona la carpeta de tu copia de ONRUSH (el paquete extraído, con Mount y EmbeddedXvd)." },
     { L"Selecione a pasta para os saves do ONRUSH", L"Select the folder for ONRUSH saves", L"Selecciona la carpeta para las partidas de ONRUSH" },
     { L"Jogador (save próprio)", L"Player (own save)", L"Jugador (partida propia)" },
     { L"Fotos do modo foto (F12)", L"Photo mode shots (F12)", L"Fotos del modo foto (F12)" },
@@ -118,6 +120,13 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Nova versão do launcher disponível: %ls (atual: v%ls).\n\nAbrir a página de download no GitHub?",
       L"A new launcher version is available: %ls (current: v%ls).\n\nOpen the download page on GitHub?",
       L"Hay una nueva versión del launcher: %ls (actual: v%ls).\n\n¿Abrir la página de descarga en GitHub?" },
+    { L"Encontrei o ONRUSH em:\n%ls\n\nPreparar o jogo na pasta do launcher?\n%ls\n\nOs arquivos do jogo são copiados (~60 MB), as pastas grandes (dat e EmbeddedXvd) viram atalhos para a sua cópia e é criado o onrush-pc.exe. A sua cópia não é alterada.",
+      L"Found ONRUSH in:\n%ls\n\nSet the game up in the launcher folder?\n%ls\n\nThe game files are copied (~60 MB), the big folders (dat and EmbeddedXvd) become links to your copy and onrush-pc.exe is created. Your copy is not modified.",
+      L"Se encontró ONRUSH en:\n%ls\n\n¿Preparar el juego en la carpeta del launcher?\n%ls\n\nLos archivos del juego se copian (~60 MB), las carpetas grandes (dat y EmbeddedXvd) se enlazan a tu copia y se crea onrush-pc.exe. Tu copia no se modifica." },
+    { L"Não foi possível preparar o jogo: %ls.", L"Could not set the game up: %ls.", L"No se pudo preparar el juego: %ls." },
+    { L"A pasta do launcher não tem os arquivos do port (d3d12_x.dll e outros).\nExtraia o zip da release inteiro e abra o launcher de dentro dele.",
+      L"The launcher folder is missing the port files (d3d12_x.dll and others).\nExtract the whole release zip and run the launcher from it.",
+      L"La carpeta del launcher no tiene los archivos del port (d3d12_x.dll y otros).\nExtrae el zip completo de la release y abre el launcher desde ahí." },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
 
@@ -178,6 +187,7 @@ static bool GameDirLooksValid(const wchar_t *dir)
     return false;
 }
 
+static bool GameDirIsReady(const wchar_t *dir);
 static void RefreshGameDirStatus(HWND hwnd)
 {
     wchar_t edit[MAX_PATH] = {};
@@ -185,7 +195,7 @@ static void RefreshGameDirStatus(HWND hwnd)
     LauncherConfig tmp = g_config;
     wcscpy_s(tmp.gamePath, MAX_PATH, edit);
     GetEffectiveGameDir(&tmp, g_gameDirShown, MAX_PATH);
-    g_gameDirOk = GameDirLooksValid(g_gameDirShown);
+    g_gameDirOk = GameDirIsReady(g_gameDirShown);
     if (!g_heroArt) LoadHeroArt(g_gameDirShown);
     RECT rc = { 0, 0, UI_HERO_W, UI_H };
     InvalidateRect(hwnd, &rc, FALSE);
@@ -234,14 +244,21 @@ static bool PickFolder(HWND hwnd, const wchar_t *title, wchar_t *out)
     return ok;
 }
 
-static bool GameDirLooksValid(const wchar_t *dir);
-// Asks for the game folder until a valid one is chosen (or the user cancels).
+#include "game_setup.inc"
+// Asks for the game folder until a valid one is chosen (or the user cancels). A copy of the game
+// that is not set up yet (the extracted package) is set up in the launcher's folder.
 static bool AskGameFolder(HWND hwnd)
 {
-    wchar_t dir[MAX_PATH];
+    wchar_t dir[MAX_PATH], mount[MAX_PATH], root[MAX_PATH];
     while (PickFolder(hwnd, T(S_PICK_GAME), dir))
     {
-        if (GameDirLooksValid(dir)) { SetWindowTextW(g_hGamePathEdit, dir); return true; }
+        if (GameDirIsReady(dir)) { SetWindowTextW(g_hGamePathEdit, dir); return true; }
+        if (FindGameCopy(dir, mount, root))
+        {
+            if (!OfferGameSetup(hwnd, dir)) return false;
+            SetWindowTextW(g_hGamePathEdit, g_exeDir);
+            return true;
+        }
         if (MessageBoxW(hwnd, T(S_BAD_DIR), L"ONRUSH", MB_ICONWARNING | MB_YESNO) != IDYES) break;
     }
     return false;
@@ -635,6 +652,25 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         ApplyUiLanguage(hwnd);
         PlUpdateVisibility(hwnd);
 
+        // "OnRushLauncher.exe -setup <copy of the game>": set the game up in the launcher folder without asking
+        {
+            int argc = 0; LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i)
+            {
+                if (_wcsicmp(argv[i], L"-setup") != 0) continue;
+                wchar_t sm[MAX_PATH], sr[MAX_PATH]; std::wstring err;
+                if (!FindGameCopy(argv[i + 1], sm, sr)) LogPrintf(L"[Setup] cópia do jogo não encontrada em %ls\r\n", argv[i + 1]);
+                else if (!SetupGameFolder(sm, sr, g_exeDir, err)) LogPrintf(L"[Setup] falhou: %ls\r\n", err.c_str());
+                else
+                {
+                    SetWindowTextW(g_hGamePathEdit, g_exeDir);
+                    wcscpy_s(g_config.gamePath, MAX_PATH, g_exeDir); wcscpy_s(initialGameDir, MAX_PATH, g_exeDir);
+                    SaveIni();
+                }
+                break;
+            }
+            if (argv) LocalFree(argv);
+        }
         LoadHeroArt(initialGameDir);
         RefreshGameDirStatus(hwnd);
 
@@ -749,14 +785,22 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             PlPreviewStop();
             ReadUiIntoConfig();
             SaveIni();
-            if (!GameDirLooksValid(g_gameDirShown))
+            if (!GameDirIsReady(g_gameDirShown))
             {
-                MessageBoxW(hwnd, T(S_NO_GAME), L"ONRUSH", MB_ICONINFORMATION);
-                if (!AskGameFolder(hwnd)) return 0;
+                // the configured folder may be the player's copy itself: offer to set it up first
+                wchar_t gm[MAX_PATH], gr[MAX_PATH];
+                if (FindGameCopy(g_gameDirShown, gm, gr) && OfferGameSetup(hwnd, g_gameDirShown)) SetWindowTextW(g_hGamePathEdit, g_exeDir);
+                else
+                {
+                    MessageBoxW(hwnd, T(S_NO_GAME), L"ONRUSH", MB_ICONINFORMATION);
+                    if (!AskGameFolder(hwnd)) return 0;
+                }
                 ReadUiIntoConfig(); SaveIni();
                 if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
                 RefreshGameDirStatus(hwnd);
             }
+            if (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") && FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") && BrandGameExe(g_gameDirShown))
+                LogPrintf(L"[Setup] onrush-pc.exe criado a partir de game_release_xbox.exe\r\n");
             if (g_hPrepWnd) return 0;  // already preparing
             // shader/pipeline preparation first (popup with progress); the game starts on WM_SHADER_PREP_DONE
             EnableWindow(g_hBtnLaunch, FALSE);

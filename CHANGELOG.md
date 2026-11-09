@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.1.1
+
+### Launcher
+- **Prepara o jogo sozinho**: ao apertar JOGAR (ou ao escolher a pasta do jogo), basta apontar a sua cópia, ou seja, o pacote extraído com `Mount` e `EmbeddedXvd`. O launcher:
+  - copia o executável e os arquivos pequenos (~60 MB) para a pasta dele;
+  - liga `dat` e `EmbeddedXvd` como atalhos para a sua cópia;
+  - cria o `onrush-pc.exe`.
+  Não precisa mais de PowerShell nem de Python para essa parte, e a sua cópia não é alterada.
+- O `onrush-pc.exe` (cópia do executável do jogo com o nome ONRUSH™ no Gerenciador de Tarefas) é criado pelo próprio launcher sempre que faltar.
+- Mensagens da pasta do jogo mais claras: pedem a pasta da sua cópia, não mais o `onrush-pc.exe`.
+- Nova opção de linha de comando `-setup "<pasta da cópia>"`.
+
+### Problemas conhecidos
+- Na primeira execução a tela fica preta até os shaders serem traduzidos com `scripts\translator\prepare_shaders.ps1` (Python + Windows SDK). Veja o README.
+- Os demais itens da v0.1.0 continuam valendo.
+
 ## v0.1.0 — primeira versão pública
 
 Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windows x64 com Direct3D 12. Nenhum arquivo do jogo vem junto: é preciso ter a sua própria cópia do pacote (veja o README).

@@ -24,23 +24,30 @@ Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.6498
 - Para gerar os shaders: **Python 3.10+** no PATH (o `dxc.exe` vem do Windows SDK; também dá para indicar com `$env:DXC`)
 - O pacote extraído do jogo (a pasta com `Mount\` e `EmbeddedXvd\`)
 
-## Como montar
+## Como jogar (zip da release)
+
+1. Extraia o zip da [última release](https://github.com/defaultdotcfg/olauncher/releases/latest) numa pasta (num disco NTFS).
+2. Abra `OnRushLauncher.exe` e aperte **JOGAR**. O launcher pede a pasta da sua cópia do jogo: o pacote extraído, com `Mount\` e `EmbeddedXvd\`.
+3. O launcher prepara o jogo na própria pasta:
+   - copia o executável e os arquivos pequenos do jogo (~60 MB);
+   - liga `dat\` e `EmbeddedXvd\` como atalhos (junctions) para a sua cópia, sem duplicar nada;
+   - cria o `onrush-pc.exe`.
+   A sua cópia não é alterada. Pela linha de comando: `OnRushLauncher.exe -setup "D:\caminho\do\pacote"`.
+4. **Shaders**: na primeira execução a tela fica preta, porque os shaders do console ainda não foram traduzidos. O jogo grava em `shaders\` os shaders que usa; depois disso, traduza-os (precisa de Python 3.10+ e do Windows SDK):
 
 ```powershell
-# 1. compilar (ou baixar o zip da última release)
-powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-
-# 2. montar a pasta do jogo a partir da sua cópia (dat\ e EmbeddedXvd\ viram junctions; nada é duplicado)
-powershell -ExecutionPolicy Bypass -File scripts\stage.ps1 -GameRoot "D:\caminho\ONRUSH_1.0.64980.34_x64__62ktj6msykznt"
-
-# 3. abrir dist_game\OnRushLauncher.exe e jogar uma corrida
-#    (o jogo grava em dist_game\shaders\ os shaders que usou)
-
-# 4. traduzir os shaders gravados
-powershell -ExecutionPolicy Bypass -File scripts\translator\prepare_shaders.ps1 -GameDir dist_game
+powershell -ExecutionPolicy Bypass -File scripts\translator\prepare_shaders.ps1 -GameDir .
 ```
 
-Repita os passos 3 e 4 depois de visitar menus e pistas novas: cada execução grava os shaders que ainda faltam. Os shaders de tesselação (árvores e terreno distantes) só são gravados depois que o VS correspondente já foi traduzido, então precisam de uma segunda passada. Ao apertar **JOGAR**, o launcher compila os `.hlsl` novos e reconstrói o cache de pipelines sozinho.
+Repita o passo 4 depois de visitar menus e pistas novas: cada execução grava os shaders que ainda faltam. Os shaders de tesselação (árvores e terreno distantes) precisam de uma segunda passada. Ao apertar **JOGAR**, o launcher compila os `.hlsl` novos e reconstrói o cache de pipelines sozinho.
+
+## Como compilar
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1      # gera bin\
+# opcional, sem o launcher: monta dist_game\ a partir da sua cópia
+powershell -ExecutionPolicy Bypass -File scripts\stage.ps1 -GameRoot "D:\caminho\ONRUSH_1.0.64980.34_x64__62ktj6msykznt"
+```
 
 ## Atualizações do launcher
 
