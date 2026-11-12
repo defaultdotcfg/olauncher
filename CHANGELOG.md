@@ -11,6 +11,7 @@
 - **Aba Fotos**: galeria das fotos tiradas no jogo (F12), com marcação de várias fotos, Marcar/Desmarcar todas, abrir foto, excluir marcadas (Lixeira) e abrir a pasta.
 - A aba Jogar mostra o perfil em uso e as horas de jogo dele, e traz a escolha da pasta do jogo e do patch (a aba Instalação saiu).
 - A opção de ir direto ao gameplay saiu.
+- Novo visual: o logo **Rush Launcher** substitui o nome na lateral e vira o ícone da janela e do executável.
 - A aba Playlist está escondida por enquanto, até a função ser melhor integrada ao jogo.
 
 ### Jogo
@@ -22,6 +23,9 @@
 - Personagens e pilotos voltam a aparecer (cabine, menus, garagem).
 - Rosto com a pele "cristal" e árvores como cartões cinza: causa comum no tradutor (uma leitura de constantes lia o endereço já sobrescrito). Tradutor revisão 4: ao subir de versão, o launcher retraduz os shaders sozinho.
 - Árvores pretas corrigidas (profundidade dos passes de árvore).
+- Telas "Escolha um veículo" e "Jogo pausado" voltam a mostrar o jogo desfocado ao fundo (antes ficavam pretas). Tradutor revisão 6.
+- O reflexo de lente (lens flare) do sol não atravessa mais paredes e terreno. Tradutor revisão 5.
+- Shaders de captura do céu com desvios estruturados (tradutor revisão 7). O launcher retraduz os shaders sozinho ao subir de revisão.
 - 12 dos 13 shaders que o tradutor recusava agora são traduzidos; os desenhos de shaders ainda não traduzidos são ignorados em vez de aparecerem como lixo.
 
 ## v0.1.0 — primeira versão pública

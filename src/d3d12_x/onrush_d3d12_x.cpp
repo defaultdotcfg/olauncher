@@ -10645,6 +10645,18 @@ HookedCreateSamplerX(ID3D12Device *pDevice, const D3D12_SAMPLER_DESC *pDesc,
     LogDesktopSamplerDesc(&convertedDesc);
   }
 
+  { // ONRUSH_LOG_CMPSAMP=1: log every comparison sampler (shadow maps) with its converted filter
+    static const bool s_cmp = GetEnvironmentVariableA("ONRUSH_LOG_CMPSAMP", nullptr, 0) > 0;
+    static volatile LONG s_cn = 0;
+    if (s_cmp && ((UINT)convertedDesc.Filter & 0x80u) && InterlockedIncrement(&s_cn) <= 40) {
+      const uint32_t *w = (const uint32_t *)pDesc;
+      log_line("[cmpsamp] #%ld dest=%llX filter=0x%X func=%d addr=%d/%d/%d lodbias=%g aniso=%u minlod=%g maxlod=%g raw=%08X %08X %08X %08X\r\n", idx,
+               (unsigned long long)DestDescriptor.ptr, (UINT)convertedDesc.Filter, (int)convertedDesc.ComparisonFunc,
+               (int)convertedDesc.AddressU, (int)convertedDesc.AddressV, (int)convertedDesc.AddressW, convertedDesc.MipLODBias,
+               convertedDesc.MaxAnisotropy, convertedDesc.MinLOD, convertedDesc.MaxLOD, w ? w[0] : 0, w ? w[1] : 0, w ? w[2] : 0, w ? w[3] : 0);
+    }
+  }
+
   HRESULT preReason = S_OK;
   if (pDevice) {
     preReason = pDevice->GetDeviceRemovedReason();
@@ -11268,6 +11280,7 @@ static bool ResetBlitListRobust(HRESULT *pRHr, HRESULT *pCHr) {
   return SUCCEEDED(rHr) && SUCCEEDED(cHr);
 }
 
+static float F11ToFloat(uint32_t v, int bits);
 static void DumpBackBufferDiagnostic(ID3D12Resource *pResource, UINT frame, const char *tag) {
   if (!pResource || !g_pMainDevice || !g_pDirectCommandQueue || !g_pBlitCommandList || !g_pBlitAllocator || !g_pBlitFence)
     return;
@@ -11393,7 +11406,20 @@ static void DumpBackBufferDiagnostic(ID3D12Resource *pResource, UINT frame, cons
   D3D12_RANGE readRange = { 0, (SIZE_T)totalBytes };
   hr = pReadbackBuf->Map(0, &readRange, (void **)&pData);
   std::vector<uint8_t> halfConv;
-  if (SUCCEEDED(hr) && pData && halfRgba) {
+  if (SUCCEEDED(hr) && pData && desc.Format == DXGI_FORMAT_R11G11B10_FLOAT) {
+    // R11G11B10 float target (sky capture panel, lit scene): decode, clamp to [0,1], gamma 2.2, store as RGBA8.
+    halfConv.resize((size_t)width * height * 4);
+    for (UINT y = 0; y < height; ++y) {
+      const uint32_t *src = (const uint32_t *)(pData + (size_t)y * rowPitch);
+      uint8_t *dst = halfConv.data() + (size_t)y * width * 4;
+      for (UINT x = 0; x < width; ++x) {
+        uint32_t v = src[x]; float c[3] = { F11ToFloat(v & 2047u, 11), F11ToFloat((v >> 11) & 2047u, 11), F11ToFloat((v >> 22) & 1023u, 10) };
+        for (int k = 0; k < 3; ++k) { float f = c[k]; if (!(f > 0.0f)) f = 0.0f; if (f > 1.0f) f = 1.0f; dst[x * 4 + k] = (uint8_t)(powf(f, 1.0f / 2.2f) * 255.0f + 0.5f); }
+        dst[x * 4 + 3] = 255;
+      }
+    }
+    D3D12_RANGE noWrite = { 0, 0 }; pReadbackBuf->Unmap(0, &noWrite); pData = halfConv.data(); rowPitch = width * 4;
+  } else if (SUCCEEDED(hr) && pData && halfRgba) {
     // HDR scene target: clamp to [0,1], gamma 2.2, store as RGBA8 for the stats/BMP code below.
     auto h2f = [](uint16_t h) -> float {
       uint32_t s = (h >> 15) & 1, e = (h >> 10) & 0x1F, m = h & 0x3FF, bits;
@@ -11477,7 +11503,7 @@ static void DumpBackBufferDiagnostic(ID3D12Resource *pResource, UINT frame, cons
 
       fwrite(&hdr, sizeof(hdr), 1, fp);
 
-      bool isRgba = (halfRgba || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || desc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS);
+      bool isRgba = (halfRgba || desc.Format == DXGI_FORMAT_R11G11B10_FLOAT || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || desc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS);
       std::vector<uint8_t> outRow(width * 4);
       for (UINT y = 0; y < height; ++y) {
         const uint8_t *srcRow = pData + y * rowPitch;
@@ -11575,6 +11601,199 @@ static void DumpMipList() {
   } __except (EXCEPTION_EXECUTE_HANDLER) { log_line("[mips] exception reading list\r\n"); }
 }
 
+static float HalfToFloatHost(uint16_t h) {
+  uint32_t s = (h >> 15) & 1, e = (h >> 10) & 31, m = h & 1023; float v;
+  if (e == 0) v = m * (1.0f / 16777216.0f); else if (e == 31) v = (m ? NAN : INFINITY); else v = (1.0f + m / 1024.0f) * powf(2.0f, (float)e - 15.0f);
+  return s ? -v : v;
+}
+// ONRUSH_TEXVAL_FRAME=N: at frame N log value statistics (min/max/mean per channel + a texel grid) of the atmosphere LUT candidates
+// (RGBA16F 2D 256x64 / 64x16 and 3D 256x128x32) found in the descriptor map. Debug only.
+static void DumpTexValues(ID3D12Resource *pRes, const char *tag) {
+  if (!pRes || !g_pMainDevice || !g_pDirectCommandQueue || !InitBlitInfrastructure()) return;
+  D3D12_RESOURCE_DESC desc = {};
+  if (!SafeGetResourceDesc(pRes, &desc) || desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT || desc.SampleDesc.Count > 1) return;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {}; UINT rows = 0; UINT64 rowSize = 0, total = 0;
+  g_pMainDevice->GetCopyableFootprints(&desc, 0, 1, 0, &fp, &rows, &rowSize, &total);
+  if (!total || total > (256ull << 20)) return;
+  D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+  D3D12_RESOURCE_DESC bd = {}; bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1;
+  bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  ID3D12Resource *rb = nullptr;
+  if (FAILED(g_pMainDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, __uuidof(ID3D12Resource), (void **)&rb)) || !rb) return;
+  HRESULT r1 = S_OK, r2 = S_OK;
+  if (!ResetBlitListRobust(&r1, &r2)) { rb->Release(); return; }
+  D3D12_RESOURCE_STATES st = GetTrackedResourceState(pRes, D3D12_RESOURCE_STATE_COMMON);
+  D3D12_RESOURCE_BARRIER b = {}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; b.Transition.pResource = pRes; b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  b.Transition.StateBefore = st; b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+  if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) g_pBlitCommandList->ResourceBarrier(1, &b);
+  D3D12_TEXTURE_COPY_LOCATION dl = {}, sl = {}; dl.pResource = rb; dl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dl.PlacedFootprint = fp;
+  sl.pResource = pRes; sl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; sl.SubresourceIndex = 0;
+  g_pBlitCommandList->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
+  if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) { std::swap(b.Transition.StateBefore, b.Transition.StateAfter); g_pBlitCommandList->ResourceBarrier(1, &b); }
+  if (FAILED(g_pBlitCommandList->Close())) { rb->Release(); return; }
+  ID3D12CommandList *pls[] = { g_pBlitCommandList }; g_pDirectCommandQueue->ExecuteCommandLists(1, pls);
+  g_BlitFenceValue++; g_pDirectCommandQueue->Signal(g_pBlitFence, g_BlitFenceValue);
+  if (g_pBlitFence->GetCompletedValue() < g_BlitFenceValue) { g_pBlitFence->SetEventOnCompletion(g_BlitFenceValue, g_hBlitEvent); WaitForSingleObject(g_hBlitEvent, INFINITE); }
+  uint8_t *data = nullptr; D3D12_RANGE rr = { 0, (SIZE_T)total };
+  if (SUCCEEDED(rb->Map(0, &rr, (void **)&data)) && data) {
+    UINT W = (UINT)desc.Width, H = desc.Height, D = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? desc.DepthOrArraySize : 1;
+    UINT pitch = fp.Footprint.RowPitch; float mn[4] = {1e30f, 1e30f, 1e30f, 1e30f}, mx[4] = {-1e30f, -1e30f, -1e30f, -1e30f}; double sum[4] = {}; UINT64 cnt = 0;
+    auto texel = [&](UINT x, UINT y, UINT z, float *o) { const uint16_t *p = (const uint16_t *)(data + (UINT64)z * pitch * H + (UINT64)y * pitch + (UINT64)x * 8); for (int c = 0; c < 4; ++c) o[c] = HalfToFloatHost(p[c]); };
+    for (UINT z = 0; z < D; ++z) for (UINT y = 0; y < H; ++y) for (UINT x = 0; x < W; ++x) { float v[4]; texel(x, y, z, v); for (int c = 0; c < 4; ++c) { if (v[c] < mn[c]) mn[c] = v[c]; if (v[c] > mx[c]) mx[c] = v[c]; sum[c] += v[c]; } ++cnt; }
+    log_line("[texval] %s %p %ux%ux%u: min=(%g %g %g %g) max=(%g %g %g %g) mean=(%g %g %g %g)\r\n", tag, (void *)pRes, W, H, D, mn[0], mn[1], mn[2], mn[3], mx[0], mx[1], mx[2], mx[3],
+             sum[0] / cnt, sum[1] / cnt, sum[2] / cnt, sum[3] / cnt);
+    UINT zs = D / 2;
+    for (UINT gy = 0; gy < 6; ++gy) {
+      char ln[600]; int o = _snprintf_s(ln, sizeof(ln), _TRUNCATE, "[texval]   y=%3u:", H * gy / 5 >= H ? H - 1 : H * gy / 5);
+      for (UINT gx = 0; gx < 6; ++gx) { UINT x = W * gx / 5 >= W ? W - 1 : W * gx / 5, y = H * gy / 5 >= H ? H - 1 : H * gy / 5; float v[4]; texel(x, y, zs, v);
+        o += _snprintf_s(ln + o, sizeof(ln) - o, _TRUNCATE, " (%.3f %.3f %.3f %.3f)", v[0], v[1], v[2], v[3]); }
+      log_line("%s\r\n", ln);
+    }
+    D3D12_RANGE wr = { 0, 0 }; rb->Unmap(0, &wr);
+  }
+  rb->Release();
+}
+static float F11ToFloat(uint32_t v, int bits) {   // unsigned 11/10-bit float (5-bit exponent)
+  uint32_t m = v & ((1u << (bits - 5)) - 1), e = (v >> (bits - 5)) & 31; float mant = (float)m / (float)(1u << (bits - 5));
+  if (e == 0) return mant * (1.0f / 16384.0f); if (e == 31) return INFINITY; return (1.0f + mant) * powf(2.0f, (float)e - 15.0f);
+}
+// Average colour of every slice of a 256x256x48 R11G11B10 texture array (the environment cubemaps: 8 cubes x 6 faces).
+static void DumpCubeFaces(ID3D12Resource *pRes) {
+  D3D12_RESOURCE_DESC desc = {};
+  if (!pRes || !g_pMainDevice || !g_pDirectCommandQueue || !InitBlitInfrastructure() || !SafeGetResourceDesc(pRes, &desc)) return;
+  UINT mips = desc.MipLevels ? desc.MipLevels : 1, slices = desc.DepthOrArraySize;
+  for (UINT sl = 0; sl < slices; ++sl) {
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {}; UINT rows = 0; UINT64 rowSize = 0, total = 0;
+    g_pMainDevice->GetCopyableFootprints(&desc, sl * mips, 1, 0, &fp, &rows, &rowSize, &total);
+    D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC bd = {}; bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    ID3D12Resource *rb = nullptr;
+    if (FAILED(g_pMainDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, __uuidof(ID3D12Resource), (void **)&rb)) || !rb) return;
+    HRESULT r1 = S_OK, r2 = S_OK; if (!ResetBlitListRobust(&r1, &r2)) { rb->Release(); return; }
+    D3D12_RESOURCE_STATES st = GetTrackedResourceState(pRes, D3D12_RESOURCE_STATE_COMMON);
+    D3D12_RESOURCE_BARRIER b = {}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; b.Transition.pResource = pRes; b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = st; b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) g_pBlitCommandList->ResourceBarrier(1, &b);
+    D3D12_TEXTURE_COPY_LOCATION dl = {}, sloc = {}; dl.pResource = rb; dl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dl.PlacedFootprint = fp;
+    sloc.pResource = pRes; sloc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; sloc.SubresourceIndex = sl * mips;
+    g_pBlitCommandList->CopyTextureRegion(&dl, 0, 0, 0, &sloc, nullptr);
+    if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) { std::swap(b.Transition.StateBefore, b.Transition.StateAfter); g_pBlitCommandList->ResourceBarrier(1, &b); }
+    if (FAILED(g_pBlitCommandList->Close())) { rb->Release(); return; }
+    ID3D12CommandList *pls[] = { g_pBlitCommandList }; g_pDirectCommandQueue->ExecuteCommandLists(1, pls);
+    g_BlitFenceValue++; g_pDirectCommandQueue->Signal(g_pBlitFence, g_BlitFenceValue);
+    if (g_pBlitFence->GetCompletedValue() < g_BlitFenceValue) { g_pBlitFence->SetEventOnCompletion(g_BlitFenceValue, g_hBlitEvent); WaitForSingleObject(g_hBlitEvent, INFINITE); }
+    uint8_t *data = nullptr; D3D12_RANGE rr = { 0, (SIZE_T)total };
+    if (SUCCEEDED(rb->Map(0, &rr, (void **)&data)) && data) {
+      double sum[3] = {}; UINT64 n = 0; UINT W = (UINT)desc.Width, H = desc.Height;
+      for (UINT y = 0; y < H; y += 4) for (UINT x = 0; x < W; x += 4) { uint32_t v = *(const uint32_t *)(data + (UINT64)y * fp.Footprint.RowPitch + x * 4);
+        sum[0] += F11ToFloat(v & 2047u, 11); sum[1] += F11ToFloat((v >> 11) & 2047u, 11); sum[2] += F11ToFloat((v >> 22) & 1023u, 10); ++n; }
+      log_line("[cubeface] %p cube=%u face=%u avg=(%.3f %.3f %.3f)\r\n", (void *)pRes, sl / 6, sl % 6, sum[0] / n, sum[1] / n, sum[2] / n);
+      D3D12_RANGE wr = { 0, 0 }; rb->Unmap(0, &wr);
+    }
+    rb->Release();
+  }
+}
+// Colour grid (8x8 texels spread over the whole texture) + mean of a single-slice R11G11B10 texture, e.g. the 1536x768 sky capture panel.
+static void DumpR11Grid(ID3D12Resource *pRes, const char *tag) {
+  D3D12_RESOURCE_DESC desc = {};
+  if (!pRes || !g_pMainDevice || !g_pDirectCommandQueue || !InitBlitInfrastructure() || !SafeGetResourceDesc(pRes, &desc)) return;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {}; UINT rows = 0; UINT64 rowSize = 0, total = 0;
+  g_pMainDevice->GetCopyableFootprints(&desc, 0, 1, 0, &fp, &rows, &rowSize, &total);
+  if (!total || total > (64ull << 20)) return;
+  D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+  D3D12_RESOURCE_DESC bd = {}; bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  ID3D12Resource *rb = nullptr;
+  if (FAILED(g_pMainDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, __uuidof(ID3D12Resource), (void **)&rb)) || !rb) return;
+  HRESULT r1 = S_OK, r2 = S_OK; if (!ResetBlitListRobust(&r1, &r2)) { rb->Release(); return; }
+  D3D12_RESOURCE_STATES st = GetTrackedResourceState(pRes, D3D12_RESOURCE_STATE_COMMON);
+  D3D12_RESOURCE_BARRIER b = {}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; b.Transition.pResource = pRes; b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  b.Transition.StateBefore = st; b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+  if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) g_pBlitCommandList->ResourceBarrier(1, &b);
+  D3D12_TEXTURE_COPY_LOCATION dl = {}, sloc = {}; dl.pResource = rb; dl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dl.PlacedFootprint = fp;
+  sloc.pResource = pRes; sloc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; sloc.SubresourceIndex = 0;
+  g_pBlitCommandList->CopyTextureRegion(&dl, 0, 0, 0, &sloc, nullptr);
+  if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) { std::swap(b.Transition.StateBefore, b.Transition.StateAfter); g_pBlitCommandList->ResourceBarrier(1, &b); }
+  if (FAILED(g_pBlitCommandList->Close())) { rb->Release(); return; }
+  ID3D12CommandList *pls[] = { g_pBlitCommandList }; g_pDirectCommandQueue->ExecuteCommandLists(1, pls);
+  g_BlitFenceValue++; g_pDirectCommandQueue->Signal(g_pBlitFence, g_BlitFenceValue);
+  if (g_pBlitFence->GetCompletedValue() < g_BlitFenceValue) { g_pBlitFence->SetEventOnCompletion(g_BlitFenceValue, g_hBlitEvent); WaitForSingleObject(g_hBlitEvent, INFINITE); }
+  uint8_t *data = nullptr; D3D12_RANGE rr = { 0, (SIZE_T)total };
+  if (SUCCEEDED(rb->Map(0, &rr, (void **)&data)) && data) {
+    UINT W = (UINT)desc.Width, H = desc.Height; double sum[3] = {}; UINT64 n = 0;
+    auto px = [&](UINT x, UINT y, float *o) { uint32_t v = *(const uint32_t *)(data + (UINT64)y * fp.Footprint.RowPitch + x * 4); o[0] = F11ToFloat(v & 2047u, 11); o[1] = F11ToFloat((v >> 11) & 2047u, 11); o[2] = F11ToFloat((v >> 22) & 1023u, 10); };
+    for (UINT y = 0; y < H; y += 4) for (UINT x = 0; x < W; x += 4) { float c[3]; px(x, y, c); for (int k = 0; k < 3; ++k) sum[k] += c[k]; ++n; }
+    log_line("[r11grid] %s %p %ux%u mean=(%.3f %.3f %.3f)\r\n", tag, (void *)pRes, W, H, sum[0] / n, sum[1] / n, sum[2] / n);
+    for (UINT gy = 0; gy < 8; ++gy) {
+      char ln[700]; int o = _snprintf_s(ln, sizeof(ln), _TRUNCATE, "[r11grid]  y=%3u:", H * gy / 8);
+      for (UINT gx = 0; gx < 8; ++gx) { float c[3]; px(W * gx / 8 + W / 16, H * gy / 8 + H / 16, c); o += _snprintf_s(ln + o, sizeof(ln) - o, _TRUNCATE, " (%.2f %.2f %.2f)", c[0], c[1], c[2]); }
+      log_line("%s\r\n", ln);
+    }
+    D3D12_RANGE wr = { 0, 0 }; rb->Unmap(0, &wr);
+  }
+  rb->Release();
+}
+// Whole-volume statistics of a small RGBA8 3D texture (baked light/AO volumes): % of non-zero bytes and mean RGB.
+static bool Dump3DRgba8Stats(ID3D12Resource *pRes, double &nzPct, double *mean) {
+  nzPct = 0; mean[0] = mean[1] = mean[2] = 0;
+  D3D12_RESOURCE_DESC desc = {};
+  if (!pRes || !g_pMainDevice || !g_pDirectCommandQueue || !InitBlitInfrastructure() || !SafeGetResourceDesc(pRes, &desc)) return false;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {}; UINT rows = 0; UINT64 rowSize = 0, total = 0;
+  g_pMainDevice->GetCopyableFootprints(&desc, 0, 1, 0, &fp, &rows, &rowSize, &total);
+  if (!total || total > (32ull << 20)) return false;
+  D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+  D3D12_RESOURCE_DESC bd = {}; bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  ID3D12Resource *rb = nullptr;
+  if (FAILED(g_pMainDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, __uuidof(ID3D12Resource), (void **)&rb)) || !rb) return false;
+  HRESULT r1 = S_OK, r2 = S_OK; if (!ResetBlitListRobust(&r1, &r2)) { rb->Release(); return false; }
+  D3D12_RESOURCE_STATES st = GetTrackedResourceState(pRes, D3D12_RESOURCE_STATE_COMMON);
+  // only resources whose tracked state is a plain SRV/COMMON state: other states are not reliable and a wrong barrier removes the device
+  if (st != D3D12_RESOURCE_STATE_COMMON && st != (D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) && st != D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) { rb->Release(); return false; }
+  D3D12_RESOURCE_BARRIER b = {}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; b.Transition.pResource = pRes; b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  b.Transition.StateBefore = st; b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+  if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) g_pBlitCommandList->ResourceBarrier(1, &b);
+  D3D12_TEXTURE_COPY_LOCATION dl = {}, sloc = {}; dl.pResource = rb; dl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dl.PlacedFootprint = fp;
+  sloc.pResource = pRes; sloc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; sloc.SubresourceIndex = 0;
+  g_pBlitCommandList->CopyTextureRegion(&dl, 0, 0, 0, &sloc, nullptr);
+  if (st != D3D12_RESOURCE_STATE_COPY_SOURCE) { std::swap(b.Transition.StateBefore, b.Transition.StateAfter); g_pBlitCommandList->ResourceBarrier(1, &b); }
+  if (FAILED(g_pBlitCommandList->Close())) { rb->Release(); return false; }
+  ID3D12CommandList *pls[] = { g_pBlitCommandList }; g_pDirectCommandQueue->ExecuteCommandLists(1, pls);
+  g_BlitFenceValue++; g_pDirectCommandQueue->Signal(g_pBlitFence, g_BlitFenceValue);
+  if (g_pBlitFence->GetCompletedValue() < g_BlitFenceValue) { g_pBlitFence->SetEventOnCompletion(g_BlitFenceValue, g_hBlitEvent); WaitForSingleObject(g_hBlitEvent, INFINITE); }
+  uint8_t *data = nullptr; D3D12_RANGE rr = { 0, (SIZE_T)total }; bool ok = false;
+  if (SUCCEEDED(rb->Map(0, &rr, (void **)&data)) && data) {
+    UINT W = (UINT)desc.Width, H = desc.Height, D = desc.DepthOrArraySize; UINT64 nz = 0, n = 0; double sum[3] = {};
+    for (UINT z = 0; z < D; ++z) for (UINT y = 0; y < H; ++y) { const uint8_t *row = data + (UINT64)z * fp.Footprint.RowPitch * H + (UINT64)y * fp.Footprint.RowPitch;
+      for (UINT x = 0; x < W; ++x) { const uint8_t *p = row + x * 4; if (p[0] | p[1] | p[2] | p[3]) ++nz; sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; ++n; } }
+    nzPct = n ? 100.0 * nz / n : 0; for (int k = 0; k < 3; ++k) mean[k] = n ? sum[k] / n / 255.0 : 0; ok = true;
+    D3D12_RANGE wr = { 0, 0 }; rb->Unmap(0, &wr);
+  }
+  rb->Release(); return ok;
+}
+static void TexValReport() {
+  std::vector<ID3D12Resource *> seen;
+  AcquireSRWLockShared(&g_descLock);
+  for (auto &kv : g_descMap) { ID3D12Resource *r = kv.second.res; if (!r) continue; bool dup = false; for (auto *q : seen) if (q == r) { dup = true; break; } if (!dup) seen.push_back(r); }
+  ReleaseSRWLockShared(&g_descLock);
+  for (size_t i = 0; i < seen.size() && i < 3000; ++i) {
+    D3D12_RESOURCE_DESC rd = {}; if (!SafeGetResourceDesc(seen[i], &rd)) continue;
+    if (rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && rd.Width == 256 && rd.Height == 256 && rd.DepthOrArraySize >= 6)
+      log_line("[cubecand] %p fmt=%d slices=%u mips=%u\r\n", (void *)seen[i], (int)rd.Format, (UINT)rd.DepthOrArraySize, (UINT)rd.MipLevels);
+    if (rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && rd.Format == DXGI_FORMAT_R11G11B10_FLOAT && rd.Width == 256 && rd.Height == 256 && (rd.DepthOrArraySize == 48 || rd.DepthOrArraySize == 24) && GetEnvironmentVariableA("ONRUSH_CUBEDUMP", nullptr, 0) > 0) { DumpCubeFaces(seen[i]); continue; }
+    if (rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && rd.Format == DXGI_FORMAT_R11G11B10_FLOAT && rd.DepthOrArraySize == 1 && rd.Width == 1536 && rd.Height == 768 && GetEnvironmentVariableA("ONRUSH_CUBEDUMP", nullptr, 0) > 0) { DumpR11Grid(seen[i], "skypanel"); continue; }
+    if (rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D && (rd.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS || rd.Format == DXGI_FORMAT_R8G8B8A8_UNORM) && rd.Width <= 64 && GetEnvironmentVariableA("ONRUSH_VOLDUMP", nullptr, 0) > 0) {
+      double nzp = 0, mean[3]; static int s_vn = 0; static int s_vzero = 0, s_vdata = 0;
+      if (Dump3DRgba8Stats(seen[i], nzp, mean)) { if (nzp < 0.5) ++s_vzero; else ++s_vdata;
+        if (++s_vn <= 60) log_line("[vol3d] %p %ux%ux%u fmt=%d nonzero=%.1f%% mean=(%.3f %.3f %.3f)\r\n", (void *)seen[i], (UINT)rd.Width, rd.Height, (UINT)rd.DepthOrArraySize, (int)rd.Format, nzp, mean[0], mean[1], mean[2]);
+        if (s_vn % 20 == 0) log_line("[vol3d] so far: all-zero=%d with data=%d\r\n", s_vzero, s_vdata); }
+      continue;
+    }
+    if (rd.Format != DXGI_FORMAT_R16G16B16A16_FLOAT) continue;
+    bool d3 =rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D, d2 = rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    bool want = (d2 && ((rd.Width == 256 && rd.Height == 64) || (rd.Width == 64 && rd.Height == 16))) || (d3 && rd.Width == 256 && rd.Height == 128 && rd.DepthOrArraySize == 32);
+    bool fog = d3 && rd.DepthOrArraySize == 128 && ((rd.Width == 60 && rd.Height == 34) || (rd.Width == 30 && rd.Height == 17));   // volumetric fog froxels
+    if (want || fog) DumpTexValues(seen[i], fog ? "fogvol" : (d3 ? "scatter3d" : (rd.Width == 256 ? "transmittance" : "irradiance")));
+  }
+}
 static void TexStatsReport() {
         std::vector<ID3D12Resource *> seen;
         AcquireSRWLockShared(&g_descLock);
@@ -12242,6 +12461,60 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
       if (s_drStep < 1) s_drStep = 1; }
     const bool inDumpRange = s_drStart >= 0 && frame_count >= s_drStart && frame_count < s_drStart + s_drCount &&
                              (frame_count - s_drStart) % s_drStep == 0;
+    { // ONRUSH_LOG_FRAME_DRAWS=1: one line per frame with the draw/dispatch counts of that frame
+      static int s_fd = -1; static LONG s_prev[STAT_COUNT] = {};
+      if (s_fd < 0) s_fd = GetEnvironmentVariableA("ONRUSH_LOG_FRAME_DRAWS", nullptr, 0) > 0 ? 1 : 0;
+      if (s_fd) {
+        LONG c[STAT_COUNT]; for (int i = 0; i < STAT_COUNT; ++i) c[i] = g_cmdTotal[i];
+        log_line("[fd] f=%lu draw=%ld idx=%ld disp=%ld exind=%ld rt=%ld nort=%ld\r\n", (unsigned long)frame_count,
+                 (long)(c[STAT_DRAW] - s_prev[STAT_DRAW]), (long)(c[STAT_DRAWIDX] - s_prev[STAT_DRAWIDX]), (long)(c[STAT_DISPATCH] - s_prev[STAT_DISPATCH]),
+                 (long)(c[STAT_EXECIND] - s_prev[STAT_EXECIND]), (long)(c[STAT_DRAW_RT] - s_prev[STAT_DRAW_RT]), (long)(c[STAT_DRAW_NORT] - s_prev[STAT_DRAW_NORT]));
+        for (int i = 0; i < STAT_COUNT; ++i) s_prev[i] = c[i];
+      }
+    }
+    { // F9 = re-arm the ONRUSH_LOG_PSHASH log (descriptor tables of the next 12 draws of that PS)
+      static int s_f9on = -1; static bool s_f9prev = false;
+      if (s_f9on < 0) s_f9on = GetEnvironmentVariableA("ONRUSH_RT_KEY", nullptr, 0) > 0 ? 1 : 0;
+      if (s_f9on) { bool dn = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+        if (dn && !s_f9prev) { InterlockedExchange(&g_pshN, 0); InterlockedExchange(&g_pshForce, 1); log_line("[rtkey] F9: PSHASH log re-armed at frame %lu\r\n", (unsigned long)frame_count); }
+        s_f9prev = dn; }
+    }
+    { // F10 = dump every render target >= 1280 px wide that was drawn into since the last stats window (debug)
+      static int s_f10on = -1; static bool s_f10prev = false;
+      if (s_f10on < 0) s_f10on = GetEnvironmentVariableA("ONRUSH_RT_KEY", nullptr, 0) > 0 ? 1 : 0;
+      if (s_f10on) {
+        bool dn = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+        if (dn && !s_f10prev) {
+          int nd = 0;
+          for (int ri = 0; ri < 24; ++ri) {
+            ID3D12Resource *rt = (ID3D12Resource *)g_rtDrawStats[ri].res; if (!rt) continue;
+            D3D12_RESOURCE_DESC rd = {};
+            if (!SafeGetResourceDesc(rt, &rd) || rd.Width < 1280) continue;
+            char tg[24]; sprintf_s(tg, "rt%d_f%d", ri, (int)rd.Format);
+            DumpBackBufferDiagnostic(rt, frame_count, tg); ++nd;
+          }
+          log_line("[rtkey] F10: dumped %d render targets at frame %lu\r\n", nd, (unsigned long)frame_count);
+        }
+        s_f10prev = dn;
+      }
+    }
+    // F11 = burst capture: the next 12 frames (backbuffer only) go to frame_<n>_backbuffer.bmp, for reporting
+    // flicker / lighting problems while playing normally (no debug option needed). ONRUSH_NO_BURST_KEY=1 disables.
+    {
+      static int s_burstLeft = 0; static bool s_f11prev = false;
+      static int s_burstOff = -1; if (s_burstOff < 0) s_burstOff = InputEnvFlag("ONRUSH_NO_BURST_KEY") ? 1 : 0;
+      if (!s_burstOff) {
+        bool dn = (GetAsyncKeyState(VK_F11) & 0x8000) != 0;
+        static int s_dlArm = 0;
+        if (g_drawList) { InterlockedExchange(&g_drawList, 0); }            // the frame that was being logged just ended
+        if (s_dlArm) { InterlockedExchange(&g_drawList, 1); s_dlArm = 0; }  // log the draws of the next frame
+        { static long s_dlFrame = -2; if (s_dlFrame == -2) { char e[32]; s_dlFrame = GetEnvironmentVariableA("ONRUSH_DL_FRAME", e, sizeof(e)) > 0 ? atol(e) : -1; }
+          if (s_dlFrame > 0 && (long)frame_count == s_dlFrame) { s_dlArm = 1; log_line("[burst] auto dl at frame %lu\r\n", (unsigned long)frame_count); } }
+        if (dn && !s_f11prev && s_burstLeft == 0) { s_dlArm = 1; s_burstLeft = 12; log_line("[burst] F11: capturing 12 frames from frame %lu\r\n", (unsigned long)frame_count); }
+        s_f11prev = dn;
+        if (s_burstLeft > 0) { --s_burstLeft; if (pCurrentBackBuffer) DumpBackBufferDiagnostic(pCurrentBackBuffer, frame_count, "backbuffer"); }
+      }
+    }
     // Periodic frame captures (frame_*.bmp, ~8 MB each, stall the GPU): only with the launcher's debug
     // option "Capturas de quadros" (ONRUSH_FRAME_DUMPS=1).
     static int s_frameDumps = -1;
@@ -12324,6 +12597,8 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
       static int s_diagProbesI = -1;   // (no dynamic static init: this function uses __try)
       if (s_diagProbesI < 0) s_diagProbesI = InputEnvFlag("ONRUSH_DIAG_PROBES") ? 1 : 0;
       const bool s_diagProbes = s_diagProbesI == 1;
+      { static long s_tvFrame = -2; if (s_tvFrame == -2) { char tb[16] = {}; s_tvFrame = GetEnvironmentVariableA("ONRUSH_TEXVAL_FRAME", tb, sizeof(tb)) > 0 ? atol(tb) : -1; }
+        if (s_tvFrame > 0 && (long)frame_count == s_tvFrame) TexValReport(); }
       if (s_diagProbes && (frame_count == 440 || frame_count == 2400)) TexStatsReport();
       if (s_diagProbes && (frame_count == 440 || frame_count == 1200)) DumpMipList();
       if (frame_count == 20 && InputEnvFlag("ONRUSH_SAMPLER")) CreateThread(nullptr, 0, CpuSamplerThread, nullptr, 0, nullptr);

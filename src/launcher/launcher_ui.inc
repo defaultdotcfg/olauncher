@@ -28,6 +28,24 @@ static HWND g_hBtnUpdate = nullptr;
 
 static ULONG_PTR g_gdiplusToken = 0;
 static Gdiplus::Bitmap *g_heroArt = nullptr;
+#include "logo_png.h"
+// The logo replaces the "RUSHLAUNCHER" text in the rail. Decoded once from the embedded PNG (the stream must outlive the bitmap).
+static Gdiplus::Bitmap *g_logo = nullptr;
+static Gdiplus::Bitmap *LogoBitmap()
+{
+    if (g_logo) return g_logo;
+    HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, sizeof(g_logoPng));
+    if (!hg) return nullptr;
+    void *p = GlobalLock(hg);
+    if (!p) { GlobalFree(hg); return nullptr; }
+    memcpy(p, g_logoPng, sizeof(g_logoPng));
+    GlobalUnlock(hg);
+    IStream *st = nullptr;
+    if (CreateStreamOnHGlobal(hg, TRUE, &st) != S_OK) { GlobalFree(hg); return nullptr; }
+    Gdiplus::Bitmap *b = Gdiplus::Bitmap::FromStream(st);
+    if (b && b->GetLastStatus() == Gdiplus::Ok) g_logo = b; else delete b;
+    return g_logo;
+}
 static bool g_vsyncOn = true, g_d3dDebugOn = false, g_verboseOn = false, g_skipIntroOn = false;
 static HWND g_hSkipIntroChk = nullptr;
 static bool g_showAdvanced = false, g_showLog = false;
@@ -366,8 +384,17 @@ static void DrawHero(HDC hdc)
     Gdiplus::SolidBrush rail(Gdiplus::Color(255, 18, 14, 11));
     g.FillRectangle(&rail, 0, 0, 216, UI_H);
     Gdiplus::Font fBrand(&ff, 16, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-    g.DrawString(L"RUSHLAUNCHER", -1, &fBrand, Gdiplus::PointF(24, 48), &white);
-    g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(24, 74), &orange);
+    if (Gdiplus::Bitmap *logo = LogoBitmap())
+    {
+        const float lw = 184.f, lh = lw * (float)LOGO_H / (float)LOGO_W;
+        g.DrawImage(logo, Gdiplus::RectF(16.f, 38.f, lw, lh));
+        g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(24, 38.f + lh + 4.f), &orange);
+    }
+    else
+    {
+        g.DrawString(L"RUSHLAUNCHER", -1, &fBrand, Gdiplus::PointF(24, 48), &white);
+        g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(24, 74), &orange);
+    }
     g.DrawString(T(S_GAMEDIR), -1, &fSmall, Gdiplus::PointF(24, 470), &muted);
     const wchar_t *status = g_gameRunning ? T(S_RUNNING) : (g_gameDirOk ? T(S_READY) : T(S_NOTFOUND));
     Gdiplus::SolidBrush *dot = g_gameRunning ? &orange : (g_gameDirOk ? &green : &red);

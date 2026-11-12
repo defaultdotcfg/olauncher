@@ -4,7 +4,13 @@
   "8bae908a39ae1f1c",
   "95d626d09ad8a406",
   "afe7fd60103fe6d6",
-  "ceda6ed547dba75d"
+  "ceda6ed547dba75d",
+  "38d8ce790920cc65",
+  "c94ddda043a410e9",
+  "f2936dc46df95943",
+  "b517a509297b03b6",
+  "5beb307872a562be",
+  "39e863363e7d655b"
  ],
  "79f473624acd0bcc": [
   [
@@ -396,5 +402,35 @@
   "fdffaf87c84e85fd",
   "fe086ca246bcd12d",
   "ffe75988fc8e70d0"
+ ],
+ "a7d882e2c0f57ae6": [
+  [
+   "float4 main(PSIn i)",
+   "// Xbox reads mip 3 of the UI backdrop; on PC that target has one mip, so blur mip 0 instead (~mip 3 footprint).\nfloat4 blur_mip3_(Texture2D tx, SamplerState sm, float2 uv) {\n  uint w, h; tx.GetDimensions(w, h); float2 px = 4.0 / float2(w, h); float4 acc = 0; float ws = 0;\n  [unroll] for (int y = -3; y <= 3; ++y) [unroll] for (int x = -3; x <= 3; ++x) {\n    float g = exp(-(float)(x * x + y * y) / 6.0); acc += tx.SampleLevel(sm, uv + float2(x, y) * px, 0) * g; ws += g; }\n  return acc / ws;\n}\nfloat4 blur_g_(bool e, Texture2D tx, SamplerState sm, float2 uv) { float4 r = 0; [branch] if (e) r = blur_mip3_(tx, sm, uv); return r; }\nfloat4 main(PSIn i)"
+  ],
+  [
+   "= Tx_sp0_r0[25].SampleLevel(Sm_sp0_r0[5], float2(asfloat(v16), asfloat(v17)), asfloat(v18));",
+   "= blur_g_(ex, Tx_sp0_r0[25], Sm_sp0_r0[5], float2(asfloat(v16), asfloat(v17)));  // UI backdrop: blur mip 0 instead of the missing mip 3"
+  ]
+ ],
+ "9d7f168d0b431c8b": [
+  [
+   "PSOut main(PSIn i)",
+   "// Xbox reads mip 3 of the UI backdrop; on PC that target has one mip, so blur mip 0 instead (~mip 3 footprint).\nfloat4 blur_mip3_(Texture2D tx, SamplerState sm, float2 uv) {\n  uint w, h; tx.GetDimensions(w, h); float2 px = 4.0 / float2(w, h); float4 acc = 0; float ws = 0;\n  [unroll] for (int y = -3; y <= 3; ++y) [unroll] for (int x = -3; x <= 3; ++x) {\n    float g = exp(-(float)(x * x + y * y) / 6.0); acc += tx.SampleLevel(sm, uv + float2(x, y) * px, 0) * g; ws += g; }\n  return acc / ws;\n}\nfloat4 blur_g_(bool e, Texture2D tx, SamplerState sm, float2 uv) { float4 r = 0; [branch] if (e) r = blur_mip3_(tx, sm, uv); return r; }\nPSOut main(PSIn i)"
+  ],
+  [
+   "= Tx_sp0_r0[25].SampleLevel(Sm_sp0_r0[5], float2(asfloat(v2), asfloat(v3)), asfloat(v4));",
+   "= blur_g_(ex, Tx_sp0_r0[25], Sm_sp0_r0[5], float2(asfloat(v2), asfloat(v3)));  // UI backdrop: blur mip 0 instead of the missing mip 3"
+  ]
+ ],
+ "371650b14baf5dec": [
+  [
+   "PSOut main(PSIn i)",
+   "// Xbox reads mip 3 of the UI backdrop; on PC that target has one mip, so blur mip 0 instead (~mip 3 footprint).\nfloat4 blur_mip3_(Texture2D tx, SamplerState sm, float2 uv) {\n  uint w, h; tx.GetDimensions(w, h); float2 px = 4.0 / float2(w, h); float4 acc = 0; float ws = 0;\n  [unroll] for (int y = -3; y <= 3; ++y) [unroll] for (int x = -3; x <= 3; ++x) {\n    float g = exp(-(float)(x * x + y * y) / 6.0); acc += tx.SampleLevel(sm, uv + float2(x, y) * px, 0) * g; ws += g; }\n  return acc / ws;\n}\nfloat4 blur_g_(bool e, Texture2D tx, SamplerState sm, float2 uv) { float4 r = 0; [branch] if (e) r = blur_mip3_(tx, sm, uv); return r; }\nPSOut main(PSIn i)"
+  ],
+  [
+   "= Tx_sp0_r0[25].SampleLevel(Sm_sp0_r0[5], float2(asfloat(v33), asfloat(v34)), asfloat(v35));",
+   "= blur_g_(ex, Tx_sp0_r0[25], Sm_sp0_r0[5], float2(asfloat(v33), asfloat(v34)));  // UI backdrop: blur mip 0 instead of the missing mip 3"
+  ]
  ]
 }

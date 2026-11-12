@@ -24,8 +24,13 @@ sys.path.insert(0, HERE)
 #    f64 ops. A revision bump also retries the shaders listed in failed.txt.
 # 4: s_buffer_load_dwordxN whose offset register is one of its own destinations read the later dwords at the new
 #    value (material sampler index = garbage -> character faces black, wrong tree textures).
-TRANSLATOR_REV = 4
-RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs')}
+# 5: lens-flare VS (38d8ce79, c94ddda0, f2936dc4): structured vcc branches (`_scalar_if`), so the depth test of the sun position
+#    is no longer overwritten by the off-screen else side (flare/bokeh no longer shows through walls and terrain).
+# 6: UI backdrop PS (a7d882e2, 9d7f168d, 371650b1, 79f4...): the mip-3 sample of the scene copy is replaced by a blur of mip 0 (the PC target has one
+#    mip, LOD 3 came out black: 'ESCOLHA UM VEICULO' / pause screens had a black background instead of the blurred game).
+# 7: sky/terrain scene-capture PS (b517a509, 5beb3078, 39e86336): vccz branches structured (`_scalar_if`).
+TRANSLATOR_REV = 7
+RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',)}
 
 
 def say(*a):

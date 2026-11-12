@@ -97,8 +97,14 @@ try {
 
     # 6. OnRushLauncher.exe
     # /utf-8: the source is UTF-8 (accents); /MANIFEST:EMBED: Common Controls v6 dependency
+    # launcher.rc: the executable icon (app.ico, resource id 1; also the window icon)
+    Push-Location $launcher
+    & rc.exe /nologo /fo "$outDir\OnRushLauncher.res" launcher.rc
+    $rcExit = $LASTEXITCODE
+    Pop-Location
+    if ($rcExit) { throw "Resource compilation failed with exit code $rcExit" }
     Invoke-Cl @("/O2", "/std:c++20", "/EHsc", "/utf-8", "/FeOnRushLauncher.exe",
-        "$launcher\OnRushLauncher.cpp", "/link", "/SUBSYSTEM:WINDOWS", "/MANIFEST:EMBED")
+        "$launcher\OnRushLauncher.cpp", "/link", "/SUBSYSTEM:WINDOWS", "/MANIFEST:EMBED", "$outDir\OnRushLauncher.res")
 
     Write-Host "`nAll components built successfully to: $outDir" -ForegroundColor Green
 }

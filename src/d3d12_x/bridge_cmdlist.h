@@ -175,7 +175,8 @@ static D3D12_COMMAND_LIST_TYPE STDMETHODCALLTYPE BridgeCmdList_GetType(BridgeCom
 // Per-interval command statistics (logged by the Present hook).
 enum { STAT_DRAW, STAT_DRAWIDX, STAT_DISPATCH, STAT_CLEARRTV, STAT_COPYTEX, STAT_EXECIND, STAT_PSO, STAT_DRAW_RT, STAT_DRAW_NORT, STAT_COUNT };
 static volatile LONG g_cmdStats[STAT_COUNT] = {};
-#define CMD_STAT(i) InterlockedIncrement(&g_cmdStats[i])
+static volatile LONG g_cmdTotal[STAT_COUNT] = {};   // never reset (ONRUSH_LOG_FRAME_DRAWS takes per-frame deltas)
+#define CMD_STAT(i) (InterlockedIncrement(&g_cmdTotal[i]), InterlockedIncrement(&g_cmdStats[i]))
 
 // Detailed draw logging window (set by the Present hook around a chosen frame).
 static volatile LONG g_drawDetail = 0;
@@ -187,6 +188,7 @@ static void FindDescIn(const UINT64* tabs, const char* where);
 // bound graphics descriptor table (see DbgPsoDraw).
 static void* volatile g_dbgPso[8] = {};
 static volatile LONG g_dbgPsoN = 0;
+static volatile LONG g_pshN = 0, g_pshForce = 0;   // F9 (ONRUSH_RT_KEY): re-arm the PSHASH log for the next 12 matching draws
 static thread_local UINT t_rc0[8] = {};
 static uint64_t BcPsoHash(void* pso); static uint64_t BcVsHash(void* pso);
 static void DbgPsoDraw(const char* kind, UINT cnt, UINT inst) {
@@ -213,9 +215,8 @@ static void DbgPsoDraw(const char* kind, UINT cnt, UINT inst) {
       if (s_after > 0 && GetTickCount64() - s_t0 < (ULONGLONG)s_after * 1000ull) return; }
     { extern volatile LONG g_rtLogFrame; static long s_fr = -2;  // ONRUSH_PSHASH_FRAME=N: only from frame N on
       if (s_fr == -2) { char fb[16] = {}; s_fr = GetEnvironmentVariableA("ONRUSH_PSHASH_FRAME", fb, sizeof(fb)) > 0 ? atol(fb) : -1; }
-      if (s_fr >= 0 && g_rtLogFrame < s_fr) return; }
-    static volatile LONG s_n = 0;
-    LONG n = InterlockedIncrement(&s_n);
+      if (!g_pshForce && s_fr >= 0 && g_rtLogFrame < s_fr) return; }
+    LONG n = InterlockedIncrement(&g_pshN);
     if (n > 12) return;
     log_line("[pshash] %s cnt=%u inst=%u pso=%p vs=%016llx ps=%016llx rc0=%08X (#%ld)\r\n", kind, cnt, inst, t_lastPso, (unsigned long long)BcVsHash(t_lastPso), (unsigned long long)BcPsoHash(t_lastPso), t_rc0[0], n);
     static const bool s_tabOnly = GetEnvironmentVariableA("ONRUSH_LOG_PSTAB_ONLY", nullptr, 0) > 0;
@@ -245,6 +246,18 @@ static thread_local void* t_vpList = nullptr;
 static thread_local void* t_scList = nullptr;
 static thread_local D3D12_VIEWPORT t_vp0 = {};
 static thread_local D3D12_RECT t_sc0 = {};
+// F11 (burst capture) also logs every draw of the next frame as [dl] (VS/PS hashes, counts, viewport): find the draw behind an artifact.
+static volatile LONG g_drawList = 0;
+static void DrawListLog(const char* kind, UINT cnt, UINT inst) {
+    static const bool s_panel = GetEnvironmentVariableA("ONRUSH_LOG_PANEL", nullptr, 0) > 0; static volatile LONG s_panelN = 0;
+    const bool panelVp = s_panel && t_lastPso && t_vp0.TopLeftX < 768 && t_vp0.Height <= 768 && ((t_vp0.Width == 768 && t_vp0.Height == 384) || (t_vp0.Width == 384 && t_vp0.Height == 768) || (t_vp0.Width == 768 && t_vp0.Height == 768) || (t_vp0.Width == 384 && t_vp0.Height == 384) || (t_vp0.Width == 1536 && t_vp0.Height == 768)) && InterlockedIncrement(&s_panelN) <= 600;
+    if ((!g_drawList && !panelVp) || !t_lastPso) return;
+    char b[256];   // formats that start with '%' are not capped by the lean-log limit
+    sprintf_s(b, "[dl] %s cnt=%u inst=%u vs=%016llx ps=%016llx pso=%p vp=%.0f,%.0f %.0fx%.0f sc=%ld,%ld-%ld,%ld\r\n", kind, cnt, inst,
+              (unsigned long long)BcVsHash(t_lastPso), (unsigned long long)BcPsoHash(t_lastPso), t_lastPso, t_vp0.TopLeftX, t_vp0.TopLeftY, t_vp0.Width, t_vp0.Height,
+              t_sc0.left, t_sc0.top, t_sc0.right, t_sc0.bottom);
+    log_line("%s", b);
+}
 static thread_local D3D12_INDEX_BUFFER_VIEW t_ib = {};
 static thread_local D3D12_VERTEX_BUFFER_VIEW t_vb[4] = {};
 static void (*g_pfnLogGeom)(UINT drawIdx, const D3D12_INDEX_BUFFER_VIEW* ib, const D3D12_VERTEX_BUFFER_VIEW* vb) = nullptr;
@@ -426,6 +439,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_DrawInstanced(
     }
 
     CMD_STAT(STAT_DRAW);
+    DrawListLog("draw", VertexCountPerInstance, InstanceCount);
     DbgPsoDraw("draw", VertexCountPerInstance, InstanceCount);
     { static int s_p = -2, s_slot = 0, s_cnt = 0; static volatile LONG s_n = 0;
       if (s_p == -2) { char sb[48] = {}; s_p = -1; if (GetEnvironmentVariableA("ONRUSH_LOG_SLOT", sb, sizeof(sb)) > 0) sscanf_s(sb, "%d:%d:%d", &s_p, &s_slot, &s_cnt); }
@@ -462,6 +476,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_DrawIndexedInstanced(
     UINT StartInstanceLocation)
 {
     CMD_STAT(STAT_DRAWIDX);
+    DrawListLog("drawIdx", IndexCountPerInstance, InstanceCount);
     DbgPsoDraw("drawIdx", IndexCountPerInstance, InstanceCount);
     FindDescIn(t_gtab, "draw");
     { static int s_p = -2, s_slot = 0, s_cnt = 0; static volatile LONG s_n = 0;
