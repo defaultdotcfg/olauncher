@@ -248,7 +248,12 @@ static thread_local D3D12_VIEWPORT t_vp0 = {};
 static thread_local D3D12_RECT t_sc0 = {};
 // F11 (burst capture) also logs every draw of the next frame as [dl] (VS/PS hashes, counts, viewport): find the draw behind an artifact.
 static volatile LONG g_drawList = 0;
+static void (*g_pfnLogCbvDump)(const D3D12_GPU_VIRTUAL_ADDRESS* cbv) = nullptr;   // set by the bridge: prints the root CBV contents
 static void DrawListLog(const char* kind, UINT cnt, UINT inst) {
+    // ONRUSH_CBV_PS=<ps hash, hex>: print the root CBV contents of the first draws that use that pixel shader ([cbvdump])
+    static unsigned long long s_cbvPs = (unsigned long long)-1; static volatile LONG s_cbvN = 0;
+    if (s_cbvPs == (unsigned long long)-1) { char e[40]; s_cbvPs = GetEnvironmentVariableA("ONRUSH_CBV_PS", e, sizeof(e)) > 0 ? _strtoui64(e, nullptr, 16) : 0; }
+    if (s_cbvPs && t_lastPso && g_pfnLogCbvDump && (unsigned long long)BcPsoHash(t_lastPso) == s_cbvPs && InterlockedIncrement(&s_cbvN) <= 3) g_pfnLogCbvDump(t_rootCbv);
     static const bool s_panel = GetEnvironmentVariableA("ONRUSH_LOG_PANEL", nullptr, 0) > 0; static volatile LONG s_panelN = 0;
     const bool panelVp = s_panel && t_lastPso && t_vp0.TopLeftX < 768 && t_vp0.Height <= 768 && ((t_vp0.Width == 768 && t_vp0.Height == 384) || (t_vp0.Width == 384 && t_vp0.Height == 768) || (t_vp0.Width == 768 && t_vp0.Height == 768) || (t_vp0.Width == 384 && t_vp0.Height == 384) || (t_vp0.Width == 1536 && t_vp0.Height == 768)) && InterlockedIncrement(&s_panelN) <= 600;
     if ((!g_drawList && !panelVp) || !t_lastPso) return;

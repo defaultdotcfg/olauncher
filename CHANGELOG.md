@@ -25,6 +25,7 @@
 - Árvores pretas corrigidas (profundidade dos passes de árvore).
 - Telas "Escolha um veículo" e "Jogo pausado" voltam a mostrar o jogo desfocado ao fundo (antes ficavam pretas). Tradutor revisão 6.
 - O reflexo de lente (lens flare) do sol não atravessa mais paredes e terreno. Tradutor revisão 5.
+- **Partículas da GPU ligadas**: os 22 kernels emissores que ficavam desligados voltam a rodar (a guarda dos despachos indiretos evita o travamento antigo). Efeitos como brilho/aura elétrica azul, destroços e respingos passam a existir. Tradutor revisão 8: o launcher esvazia o `skip.txt` antigo sozinho.
 - Shaders de captura do céu com desvios estruturados (tradutor revisão 7). O launcher retraduz os shaders sozinho ao subir de revisão.
 - 12 dos 13 shaders que o tradutor recusava agora são traduzidos; os desenhos de shaders ainda não traduzidos são ignorados em vez de aparecerem como lixo.
 

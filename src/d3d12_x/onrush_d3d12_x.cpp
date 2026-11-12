@@ -9234,6 +9234,7 @@ static void LogRootCbvImpl(UINT drawIdx, void* pso, const D3D12_GPU_VIRTUAL_ADDR
   }
 }
 
+
 static HRESULT STDMETHODCALLTYPE HookedCreatePlacedResourceX(
     ID3D12Device *pDevice, void *pHeapOrAddress,
     const D3D12_RESOURCE_DESC *pDesc, D3D12_RESOURCE_STATES InitialState,
@@ -9718,6 +9719,22 @@ static void DumpPsoShaders(void* pso) {
 
 volatile LONG g_rtLogFrame = 0;
 #include "bridge_cmdlist.h"
+// ONRUSH_CBV_PS: rows of every root CBV of the draw (float4 per line), for checking what the CPU feeds a shader
+static void LogCbvDumpImpl(const D3D12_GPU_VIRTUAL_ADDRESS* cbv) {
+  static volatile LONG s_call = 0; LONG call = InterlockedIncrement(&s_call);
+  for (int pi = 0; pi < 8; ++pi) {
+    D3D12_GPU_VIRTUAL_ADDRESS va = cbv[pi]; if (!va) continue;
+    LONG n = g_placedBufCount; if (n > 20000) n = 20000; const PlacedBufInfo* hit = nullptr;
+    for (LONG k = 0; k < n; ++k) { const PlacedBufInfo& q = g_placedBufs[k]; if (va >= q.va && va < q.va + q.size) { hit = &q; break; } }
+    if (!hit) { char b[96]; sprintf_s(b, "[cbvdump] #%ld param%d va=%llX NOT-IN-PLACED\r\n", call, pi, (unsigned long long)va); log_line("%s", b); continue; }
+    const float* f = (const float*)((const uint8_t*)hit->cpu + (va - hit->va)); UINT64 rows = (hit->size - (va - hit->va)) / 16; if (rows > 150) rows = 150;
+    for (UINT64 r = 0; r < rows; ++r) {
+      if (!(r < 26 || r == 77 || r == 123 || r == 141)) continue;
+      char b[200]; sprintf_s(b, "[cbvdump] #%ld p%d row%llu %g %g %g %g\r\n", call, pi, (unsigned long long)r, f[r * 4], f[r * 4 + 1], f[r * 4 + 2], f[r * 4 + 3]); log_line("%s", b);
+    }
+  }
+}
+static struct CbvDumpInit { CbvDumpInit() { g_pfnLogCbvDump = LogCbvDumpImpl; } } g_cbvDumpInit;
 
 typedef void(STDMETHODCALLTYPE *PFN_ExecuteCommandLists)(
     ID3D12CommandQueue *pQueue, UINT NumCommandLists,
@@ -12589,7 +12606,9 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
           }
         } }
 
-      if (frame_count == PF(400)) { g_drawDetailCount = 0; g_drawDetail = 1; g_pfnLogRootCbv = LogRootCbvImpl; g_pfnLogGeom = LogGeomImpl; } else if (frame_count == PF(401)) g_drawDetail = 0;
+      static long s_detF = -2; if (s_detF == -2) { char e[32]; s_detF = GetEnvironmentVariableA("ONRUSH_DETAIL_FRAME", e, sizeof(e)) > 0 ? atol(e) : -1; }   // ONRUSH_DETAIL_FRAME=n: the detail/pixel-query frame (default PF(400))
+      const UINT detF = s_detF > 0 ? (UINT)s_detF : PF(400);
+      if (frame_count == detF) { g_drawDetailCount = 0; g_drawDetail = 1; g_pfnLogRootCbv = LogRootCbvImpl; g_pfnLogGeom = LogGeomImpl; } else if (frame_count == detF + 1) g_drawDetail = 0;
       // One-shot content probes below read resources the bridge remembered earlier; when a frame
       // number lands on a level load those resources may already be freed (GetDesc on a freed
       // texture faulted inside D3D12Core holding a lock -> game froze on the race loading screen).
@@ -12602,8 +12621,8 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
       if (s_diagProbes && (frame_count == 440 || frame_count == 2400)) TexStatsReport();
       if (s_diagProbes && (frame_count == 440 || frame_count == 1200)) DumpMipList();
       if (frame_count == 20 && InputEnvFlag("ONRUSH_SAMPLER")) CreateThread(nullptr, 0, CpuSamplerThread, nullptr, 0, nullptr);
-      if (frame_count == PF(395)) { PsQuerySetup(); TsSetup(); }
-      if (frame_count == PF(410)) { PsQueryReport(); TsReport(); }
+      if (frame_count == detF - 5) { PsQuerySetup(); TsSetup(); }
+      if (frame_count == detF + 10) { PsQueryReport(); TsReport(); }
       if (frame_count == PF(412)) if (InputEnvFlag("ONRUSH_GPU_PROBES")) GpuCbvProbe(); if (frame_count == PF(412)) if (InputEnvFlag("ONRUSH_GPU_PROBES")) GpuGeoProbe(); if (frame_count == PF(413)) if (InputEnvFlag("ONRUSH_GPU_PROBES")) GpuScanPlaced(); if (frame_count == PF(414)) if (InputEnvFlag("ONRUSH_GPU_PROBES")) GpuXProbe(); if (frame_count == PF(415)) if (InputEnvFlag("ONRUSH_GPU_PROBES")) GpuRtProbe();
       if (s_diagProbes && frame_count == 420 && g_bigCopySrc) {
         D3D12_RESOURCE_DESC bd_ = {}; SafeGetResourceDesc(g_bigCopySrc, &bd_); D3D12_HEAP_PROPERTIES hp_ = {}; D3D12_HEAP_FLAGS hf_ = {}; HRESULT hh_ = g_bigCopySrc->GetHeapProperties(&hp_, &hf_);

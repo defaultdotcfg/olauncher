@@ -29,8 +29,10 @@ sys.path.insert(0, HERE)
 # 6: UI backdrop PS (a7d882e2, 9d7f168d, 371650b1, 79f4...): the mip-3 sample of the scene copy is replaced by a blur of mip 0 (the PC target has one
 #    mip, LOD 3 came out black: 'ESCOLHA UM VEICULO' / pause screens had a black background instead of the blurred game).
 # 7: sky/terrain scene-capture PS (b517a509, 5beb3078, 39e86336): vccz branches structured (`_scalar_if`).
-TRANSLATOR_REV = 7
-RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',)}
+# 8: GPU particle emitters (the 22 counter kernels of the old skip.txt) are enabled: the ExecuteIndirect guard in the bridge made them
+#    stable. Nitro jets, auras, wreck/splash particles come from them. An old skip.txt is emptied once.
+TRANSLATOR_REV = 8
+RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: ()}
 
 
 def say(*a):
@@ -80,6 +82,7 @@ def main(argv):
     try: old_rev = int(open(rev_path).read().split()[0])
     except Exception: old_rev = 1
     redo = sorted({k for r, ks in RETRANSLATE.items() if old_rev < r <= TRANSLATOR_REV for k in ks})
+    if old_rev < 8 and os.path.exists(skip_path): open(skip_path, 'w').write('')   # emitters on (rev 8)
     if redo: failed = set()   # a translator fix may make them work: try them again
     if redo and not cancelled():
         for k in [k for k in redo if k != 'tess']:
