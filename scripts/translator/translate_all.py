@@ -31,8 +31,10 @@ sys.path.insert(0, HERE)
 # 7: sky/terrain scene-capture PS (b517a509, 5beb3078, 39e86336): vccz branches structured (`_scalar_if`).
 # 8: GPU particle emitters (the 22 counter kernels of the old skip.txt) are enabled: the ExecuteIndirect guard in the bridge made them
 #    stable. Nitro jets, auras, wreck/splash particles come from them. An old skip.txt is emptied once.
-TRANSLATOR_REV = 8
-RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: ()}
+# 9: sun cascade shadow mask CS (48facb18): its wave-level vccz/vccnz branches (GCN tests the whole 64-lane wave) are structured as
+#    "any lane of the 64-thread group" (`_sif_any64`); before, far terrain came out fully shadowed and the pre-race floor was white.
+TRANSLATOR_REV = 9
+RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',)}
 
 
 def say(*a):

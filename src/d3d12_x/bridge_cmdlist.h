@@ -747,6 +747,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_Dispatch(
     UINT ThreadGroupCountZ)
 {
     CMD_STAT(STAT_DISPATCH);
+    if (g_drawList && t_lastPso) { char b[160]; sprintf_s(b, "[dl] dispatch cs=%016llx groups=%u,%u,%u\r\n", (unsigned long long)BcPsoHash(t_lastPso), ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ); log_line("%s", b); }
     FindUavAtDispatch();
     { static int s_p = -2, s_slot = 0, s_cnt = 1; static void* s_seen[256]; static volatile LONG s_ns = 0;
       if (s_p == -2) { char sb[48] = {}; s_p = -1; if (GetEnvironmentVariableA("ONRUSH_LOG_CSLOT", sb, sizeof(sb)) > 0) sscanf_s(sb, "%d:%d:%d", &s_p, &s_slot, &s_cnt); }

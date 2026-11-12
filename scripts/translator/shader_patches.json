@@ -10,7 +10,8 @@
   "f2936dc46df95943",
   "b517a509297b03b6",
   "5beb307872a562be",
-  "39e863363e7d655b"
+  "39e863363e7d655b",
+  "48facb183ca302a7"
  ],
  "79f473624acd0bcc": [
   [
@@ -409,5 +410,8 @@
    "= Tx_sp0_r0[25].SampleLevel(Sm_sp0_r0[5], float2(asfloat(v33), asfloat(v34)), asfloat(v35));",
    "= blur_g_(ex, Tx_sp0_r0[25], Sm_sp0_r0[5], float2(asfloat(v33), asfloat(v34)));  // UI backdrop: blur mip 0 instead of the missing mip 3"
   ]
+ ],
+ "_sif_any64": [
+  "48facb183ca302a7"
  ]
 }

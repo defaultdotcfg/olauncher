@@ -28,6 +28,7 @@ def build(d, skip_existing=False, skip=(), progress=None, cancelled=lambda: Fals
     progress(done, total) is called per dump. Returns (Counter of results, set of failed hashes, Counter of reasons)."""
     patches = _patches()
     sif, stub = set(patches.get('_scalar_if', [])), set(patches.get('_stub_image', []))
+    any64 = set(patches.get('_sif_any64', []))
     out = os.path.join(d, 'translated'); os.makedirs(out, exist_ok=True)
     files = sorted(glob.glob(os.path.join(d, pattern)))
     seen = set(); stat = collections.Counter(); reasons = collections.Counter(); failed = set()
@@ -45,7 +46,7 @@ def build(d, skip_existing=False, skip=(), progress=None, cancelled=lambda: Fals
         seen.add(h)
         if hx in skip: stat['skipped'] += 1; continue
         if skip_existing and os.path.exists(os.path.join(out, hx + '.hlsl')): stat['existing'] += 1; continue
-        T.SIF_FORCE = hx in sif
+        T.SIF_FORCE = hx in sif; T.SIF_ANY64 = hx in any64
         if hx in stub: os.environ['STUB_IMAGE'] = '1'
         else: os.environ.pop('STUB_IMAGE', None)
         try:
@@ -59,7 +60,7 @@ def build(d, skip_existing=False, skip=(), progress=None, cancelled=lambda: Fals
         ok, msg = (True, '') if os.environ.get('NOCHECK') else hlslc.compile_hlsl(txt.encode(), f"{kind}_5_1")
         if not ok and 'gradient' in msg:
             T.LOD0 = True
-            T.SIF_FORCE = hx in sif
+            T.SIF_FORCE = hx in sif; T.SIF_ANY64 = hx in any64
             try: txt, todo = T.translate(f)
             finally: T.LOD0 = False
             ok, msg = hlslc.compile_hlsl(txt.encode(), f"{kind}_5_1")

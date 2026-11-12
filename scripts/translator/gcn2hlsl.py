@@ -16,6 +16,7 @@ import sys, re, struct, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gcn_dis as G
 SIF_FORCE = False   # set per shader by build_shader_cache.py (shader_patches.json "_scalar_if")
+SIF_ANY64 = False   # set per shader ("_sif_any64"): in a 64-thread CS, structured vccz/vccnz branches test the whole group (= one GCN wave), not each lane
 
 def _lds_sync(body):
     """A 64-thread group is a single wave on the Xbox, so its compiler drops s_barrier around LDS.
@@ -352,6 +353,8 @@ class Tr:
                     if last is None or re.search(r'\bex\b|\bvcc\b|\bsp_\d+|\bv\d+\b', last): uniform = False
                 if uniform and T is not None and T > P and (not blk or T <= blk[-1][0]):
                     cond = {'s_cbranch_scc0': 'scc != 0u', 's_cbranch_scc1': 'scc == 0u', 's_cbranch_vccz': 'vcc', 's_cbranch_vccnz': '!vcc'}[op]
+                    if SIF_ANY64 and self.kind == 'cs' and op.startswith('s_cbranch_vcc') and (lambda tg_: tg_[0] * tg_[1] * tg_[2] == 64)(self.decls.get('tg', (1, 1, 1))):
+                        cond = 'any64_(vcc, flat)' if op == 's_cbranch_vccz' else '!any64_(vcc, flat)'; self.uses_any64 = True
                     self.emit(f"[branch] if ({cond}) {{   // {op} {args}"); blk.append([T, len(self.body) - 1, [], (dict(self.sym), dict(self.cval), dict(self.sg), dict(self.origin))]); continue
             if structured and op == 's_branch' and blk:
                 T = tgt(args); nxt = int(ins[k + 1][0], 16) if k + 1 < len(ins) else None
@@ -1435,6 +1438,9 @@ class Tr:
             if getattr(self, 'uses_lds', False):
                 words = 8192
                 h.append(f"groupshared uint lds[{words}];")
+            if getattr(self, 'uses_any64', False):
+                h.append("#define any64_f lds[8191]" if getattr(self, 'uses_lds', False) else "groupshared uint any64_f;")   # LDS is already declared at the 32 KB limit
+                h.append("bool any64_(bool v, uint flat) { GroupMemoryBarrierWithGroupSync(); if (flat == 0u) any64_f = 0u; GroupMemoryBarrierWithGroupSync(); if (v) { uint d_; InterlockedOr(any64_f, 1u, d_); } GroupMemoryBarrierWithGroupSync(); bool r = any64_f != 0u; GroupMemoryBarrierWithGroupSync(); return r; }")
             if getattr(self, 'uses_ctr', False):
                 h.append("RWByteAddressBuffer g_ctr : register(u200, space99);")
             h.append(f"[numthreads({tg[0]}, {tg[1]}, {tg[2]})]")
