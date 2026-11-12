@@ -26,6 +26,7 @@
 - Telas "Escolha um veículo" e "Jogo pausado" voltam a mostrar o jogo desfocado ao fundo (antes ficavam pretas). Tradutor revisão 6.
 - O reflexo de lente (lens flare) do sol não atravessa mais paredes e terreno. Tradutor revisão 5.
 - **Sombras do sol**: o passe da máscara de sombra em cascata era traduzido com desvios por lane em vez de por onda de 64 lanes; o terreno distante saía todo em sombra e o chão do menu pré-corrida ficava branco. Agora o mapa inteiro recebe o sol e as sombras de árvores e do carro aparecem. O CS de iluminação principal da corrida usa o mesmo tratamento (cores do ambiente e da areia bem mais próximas do Xbox). Tradutor revisão 9.
+- **Névoa e atmosfera**: o passe de névoa volumétrica (froxels) também usava desvios por lane. Com a correção a névoa/bruma volta: o menu pré-corrida ganha montanhas enevoadas, chão azul-claro e céu claro, e a corrida fica com cores de areia e mar bem mais naturais.
 - **Partículas da GPU ligadas**: os 22 kernels emissores que ficavam desligados voltam a rodar (a guarda dos despachos indiretos evita o travamento antigo). Efeitos como brilho/aura elétrica azul, destroços e respingos passam a existir. Tradutor revisão 8: o launcher esvazia o `skip.txt` antigo sozinho.
 - Shaders de captura do céu com desvios estruturados (tradutor revisão 7). O launcher retraduz os shaders sozinho ao subir de revisão.
 - 12 dos 13 shaders que o tradutor recusava agora são traduzidos; os desenhos de shaders ainda não traduzidos são ignorados em vez de aparecerem como lixo.
