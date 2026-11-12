@@ -28,14 +28,14 @@ static_assert(sizeof(XboxSamplerPackedHeader) == 8, "XboxSamplerPackedHeader mus
 struct XboxSamplerPayload
 {
     uint32_t FilterTag;       // +0x00: Initialized to 0x20
-    uint32_t MinFilter;       // +0x04: d0 from table 0xE4C260
-    uint32_t MagFilter;       // +0x08: d0 from table 0xE4C260
-    uint32_t MipFilter;       // +0x0C: d1 from table 0xE4C260
-    uint32_t MipMode;         // +0x10: d2 from table 0xE4C260 (1=mono-level, 2=multi-level)
+    uint32_t MinFilter;       // +0x04: d0 from table 0xEAACF0
+    uint32_t MagFilter;       // +0x08: d0 from table 0xEAACF0
+    uint32_t MipFilter;       // +0x0C: d1 from table 0xEAACF0
+    uint32_t MipMode;         // +0x10: d2 from table 0xEAACF0 (1=mono-level, 2=multi-level)
     float    MipLODBias;      // +0x14: Base LOD bias (typically 0.0f)
-    uint32_t AddressU;        // +0x18: Translated from table 0xE4ED38
-    uint32_t AddressV;        // +0x1C: Translated from table 0xE4ED38
-    uint32_t AddressW;        // +0x20: Translated from table 0xE4ED38
+    uint32_t AddressU;        // +0x18: Translated from table 0xEAD9B8
+    uint32_t AddressV;        // +0x1C: Translated from table 0xEAD9B8
+    uint32_t AddressW;        // +0x20: Translated from table 0xEAD9B8
     float    LODBiasAdj;      // +0x24: LOD bias adjustment (typically 0.0f)
     float    MaxLOD;          // +0x28: Maximum LOD (typically FLT_MAX = 0x7F7FFFFF)
     uint32_t Unk2C;           // +0x2C: 0
@@ -43,7 +43,7 @@ struct XboxSamplerPayload
     uint32_t MaxAnisotropy;   // +0x34: Max anisotropy (1, 4, 8, 16)
     float    MinLOD;          // +0x38: Minimum LOD (0.0f or 0.5f)
     uint32_t QualityTier;     // +0x3C: 0
-    uint32_t ComparisonFunc;  // +0x40: Translated from table 0xE4ED48
+    uint32_t ComparisonFunc;  // +0x40: Translated from table 0xEAD9C8
     uint32_t Unk44;           // +0x44: 0
     float    BorderColorR;    // +0x48: 0.0f
     float    BorderColorG;    // +0x4C: 0.0f
@@ -138,7 +138,7 @@ extern const uint32_t kXboxComparisonTable[8];
 // Core Translation Functions
 // ============================================================================
 
-// Translates a packed address index (0..7) using table 0xE4ED38.
+// Translates a packed address index (0..7) using table 0xEAD9B8.
 // Rejects index 3 (produces 0) and index 7 (produces 4 / BORDER).
 // Rejects values other than 1 (WRAP), 2 (MIRROR), 3 (CLAMP).
 SamplerTranslationStatus TranslateXboxPackedAddressIndex(

@@ -11,7 +11,6 @@
 #define ID_BTN_ADVANCED   1020
 #define ID_BTN_SHOW_LOG   1021
 #define ID_DISCORD_CHK    1022
-#define ID_GAMEPLAY_CHK   1023
 #define ID_SKIPINTRO_CHK  1024
 #include <shobjidl.h>
 #include "discord_rpc.inc"
@@ -29,8 +28,8 @@ static HWND g_hBtnUpdate = nullptr;
 
 static ULONG_PTR g_gdiplusToken = 0;
 static Gdiplus::Bitmap *g_heroArt = nullptr;
-static bool g_vsyncOn = true, g_d3dDebugOn = false, g_verboseOn = false, g_quickGameplayOn = false, g_skipIntroOn = false;
-static HWND g_hGameplayChk = nullptr, g_hSkipIntroChk = nullptr;
+static bool g_vsyncOn = true, g_d3dDebugOn = false, g_verboseOn = false, g_skipIntroOn = false;
+static HWND g_hSkipIntroChk = nullptr;
 static bool g_showAdvanced = false, g_showLog = false;
 static bool g_discordOn = true;
 static char g_discordAppId[64] = {};
@@ -56,11 +55,13 @@ static const wchar_t *kUiLangNames[] = { L"Português", L"English", L"Español" 
 
 enum UiStr {
     S_SETTINGS, S_RES, S_MODE, S_TEXTLANG, S_VOICELANG, S_GAMEDIR, S_SAVEDIR, S_VSYNC, S_SKIP, S_ADV, S_D3DDBG,
-    S_VERBOSE, S_GAMEPLAY, S_PLAY, S_CLOSE, S_PREP, S_BTN_GAME, S_BTN_SAVES, S_SHOWLOG, S_HIDELOG, S_CLEAR, S_COPY,
+    S_VERBOSE, S_PLAY, S_CLOSE, S_PREP, S_BTN_GAME, S_BTN_SAVES, S_SHOWLOG, S_HIDELOG, S_CLEAR, S_COPY,
     S_RUNNING, S_READY, S_NOTFOUND, S_VERSION, S_MODE_BORDERLESS, S_MODE_WINDOW, S_MODE_FULL, S_LANG_SYSTEM,
     S_LANG_SAME, S_PICK_GAME, S_BAD_DIR, S_NO_GAME, S_PICK_SAVE, S_PLAYER, S_PHOTO, S_PHOTO_PNG, S_PHOTO_JPG,
     S_UPD_CHECK, S_UPD_CHECKING, S_UPD_AVAIL, S_UPD_LATEST, S_UPD_FAIL, S_UPD_NONE, S_UPD_ASK,
-    S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL, S_COUNT
+    S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL,
+    S_HOME_TITLE, S_HOME_HINT, S_INSTALL_TITLE, S_INSTALL_HINT, S_INSTALL_READY, S_INSTALL_MISSING,
+    S_PATCH_ASK, S_PICK_PATCH, S_BAD_PATCH, S_PATCH_CONFIRM, S_PATCH_PROGRESS, S_PATCH_FAIL, S_HOME_PROFILE, S_HOME_PLAYTIME, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -75,7 +76,6 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Opções avançadas", L"Advanced options", L"Opciones avanzadas" },
     { L"Camada de depuração do Direct3D 12", L"Direct3D 12 debug layer", L"Capa de depuración de Direct3D 12" },
     { L"Modo de depuração (log completo e capturas BMP)", L"Debug mode (full log and BMP captures)", L"Modo de depuración (registro completo y capturas BMP)" },
-    { L"Ir direto para o gameplay (teste)", L"Go straight to gameplay (test)", L"Ir directo a la partida (prueba)" },
     { L"JOGAR", L"PLAY", L"JUGAR" },
     { L"FECHAR JOGO", L"CLOSE GAME", L"CERRAR JUEGO" },
     { L"PREPARANDO…", L"PREPARING…", L"PREPARANDO…" },
@@ -136,6 +136,28 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Não foi possível baixar a atualização (%ls).\n\nAbrir a página da versão no GitHub?",
       L"Could not download the update (%ls).\n\nOpen the release page on GitHub?",
       L"No se pudo descargar la actualización (%ls).\n\n¿Abrir la página de la versión en GitHub?" },
+    { L"Pronto para correr?", L"Ready to race?", L"¿Listo para correr?" },
+    { L"Selecione JOGAR para iniciar o jogo.", L"Select PLAY to start the game.", L"Selecciona JUGAR para iniciar el juego." },
+    { L"Instalação do jogo", L"Game installation", L"Instalación del juego" },
+    { L"Use … para escolher a sua cópia do ONRUSH (o pacote extraído). Se ela não estiver na versão final 1.80.100.100, o launcher pede em seguida a pasta do patch da atualização.",
+      L"Use … to choose your ONRUSH copy (the extracted package). If it is not the final version 1.80.100.100, the launcher then asks for the update patch folder.",
+      L"Usa … para elegir tu copia de ONRUSH (el paquete extraído). Si no es la versión final 1.80.100.100, el launcher pide después la carpeta del parche." },
+    { L"Status: pronto", L"Status: ready", L"Estado: listo" },
+    { L"Status: selecione a pasta do jogo", L"Status: select the game folder", L"Estado: selecciona la carpeta del juego" },
+    { L"Esta cópia do ONRUSH é a versão %ls.\nO port funciona com a versão final, %ls.\n\nVocê tem o patch da atualização (a pasta extraída com os arquivos .gdiff e os pacotes .dat novos)? Escolha a pasta dele para atualizar a cópia.",
+      L"This ONRUSH copy is version %ls.\nThe port works with the final version, %ls.\n\nDo you have the update patch (the extracted folder with the .gdiff files and the new .dat packs)? Choose its folder to update the copy.",
+      L"Esta copia de ONRUSH es la versión %ls.\nEl port funciona con la versión final, %ls.\n\n¿Tienes el parche de la actualización (la carpeta extraída con los archivos .gdiff y los paquetes .dat nuevos)? Elige su carpeta para actualizar la copia." },
+    { L"Selecione a pasta do patch da atualização (1.80.100.100)", L"Select the update patch folder (1.80.100.100)", L"Selecciona la carpeta del parche (1.80.100.100)" },
+    { L"Essa pasta não parece ser o patch do ONRUSH (falta Mount\\game_release_xbox.exe.gdiff).\nTentar outra pasta?",
+      L"This folder does not look like the ONRUSH patch (Mount\\game_release_xbox.exe.gdiff is missing).\nTry another folder?",
+      L"Esta carpeta no parece el parche de ONRUSH (falta Mount\\game_release_xbox.exe.gdiff).\n¿Probar otra carpeta?" },
+    { L"Aplicar o patch na sua cópia do jogo?\n%ls\n\nOs arquivos alterados são atualizados e os pacotes novos são MOVIDOS da pasta do patch para a cópia (~13 GB; no mesmo disco é instantâneo e não ocupa espaço extra). Depois disso a pasta do patch fica vazia.",
+      L"Apply the patch to your game copy?\n%ls\n\nChanged files are updated and the new packs are MOVED from the patch folder into the copy (~13 GB; instant and no extra space on the same disk). Afterwards the patch folder is left empty.",
+      L"¿Aplicar el parche a tu copia del juego?\n%ls\n\nLos archivos modificados se actualizan y los paquetes nuevos se MUEVEN de la carpeta del parche a la copia (~13 GB; instantáneo y sin espacio extra en el mismo disco). Después la carpeta del parche queda vacía." },
+    { L"Atualizando o jogo… %d%%", L"Updating the game… %d%%", L"Actualizando el juego… %d%%" },
+    { L"Não foi possível aplicar o patch: %ls.", L"Could not apply the patch: %ls.", L"No se pudo aplicar el parche: %ls." },
+    { L"Perfil", L"Profile", L"Perfil" },
+    { L"Tempo de jogo", L"Play time", L"Tiempo de juego" },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
 
@@ -206,8 +228,7 @@ static void RefreshGameDirStatus(HWND hwnd)
     GetEffectiveGameDir(&tmp, g_gameDirShown, MAX_PATH);
     g_gameDirOk = GameDirIsReady(g_gameDirShown);
     if (!g_heroArt) LoadHeroArt(g_gameDirShown);
-    RECT rc = { 0, 0, UI_HERO_W, UI_H };
-    InvalidateRect(hwnd, &rc, FALSE);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 static void SaveIni()
@@ -287,7 +308,6 @@ static void LayoutAdvanced(HWND hwnd)
 {
     ShowWindow(g_hD3DDebugChk, g_showAdvanced ? SW_SHOW : SW_HIDE);
     ShowWindow(g_hVerboseChk, g_showAdvanced ? SW_SHOW : SW_HIDE);
-    ShowWindow(g_hGameplayChk, g_showAdvanced ? SW_SHOW : SW_HIDE);
     InvalidateRect(g_hAdvBtn, nullptr, TRUE);
 }
 
@@ -295,12 +315,15 @@ static void LayoutLog(HWND hwnd)
 {
     int sw = g_showLog ? SW_SHOW : SW_HIDE;
     ShowWindow(g_hLogEdit, sw); ShowWindow(g_hClearLogBtn, sw); ShowWindow(g_hCopyLogBtn, sw);
+    ShowWindow(g_hBtnUpdate, g_showLog ? SW_HIDE : SW_SHOW);
     SetWindowTextW(g_hLogBtn, g_showLog ? T(S_HIDELOG) : T(S_SHOWLOG));
     RECT rc = { 0, 0, UI_HERO_W, UI_H };
     InvalidateRect(hwnd, &rc, FALSE);
 }
 
 #include "playlist_ui.inc"
+#include "profiles_ui.inc"
+#include "photos_ui.inc"
 
 static void DrawHero(HDC hdc)
 {
@@ -308,41 +331,48 @@ static void DrawHero(HDC hdc)
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
     g.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
-    Gdiplus::SolidBrush bg(Gdiplus::Color(255, 16, 18, 22));
+    Gdiplus::SolidBrush bg(Gdiplus::Color(255, 18, 14, 11));
     g.FillRectangle(&bg, 0, 0, UI_HERO_W, UI_H);
     if (g_heroArt)
     {
-        // cover-fit the 16:9 art into the hero area, centred on the logo
+        // Keep the art in the content column; the left 216 px are reserved for navigation.
         float iw = (float)g_heroArt->GetWidth(), ih = (float)g_heroArt->GetHeight();
-        float sc = max((float)UI_HERO_W / iw, (float)UI_H / ih);
+        float artW = (float)UI_HERO_W - 216.f;
+        float sc = max(artW / iw, (float)UI_H / ih);
         float dw = iw * sc, dh = ih * sc;
-        g.DrawImage(g_heroArt, Gdiplus::RectF(((float)UI_HERO_W - dw) / 2.f, ((float)UI_H - dh) / 2.f, dw, dh));
+        g.DrawImage(g_heroArt, Gdiplus::RectF(216.f + (artW - dw) / 2.f, ((float)UI_H - dh) / 2.f, dw, dh));
     }
+    Gdiplus::SolidBrush railBase(Gdiplus::Color(255, 18, 14, 11));
+    g.FillRectangle(&railBase, 0, 0, 216, UI_H);
     if (g_tab == 1) { PlDrawHero(g); return; }
+    if (g_tab == 4) { PhDrawHero(g); return; }
     if (g_showLog)
     {
-        Gdiplus::SolidBrush dim(Gdiplus::Color(235, 12, 13, 16));
+        Gdiplus::SolidBrush dim(Gdiplus::Color(235, 15, 12, 10));
         g.FillRectangle(&dim, 0, 0, UI_HERO_W, UI_H);
         return;
     }
-    Gdiplus::LinearGradientBrush fade(Gdiplus::Point(0, UI_H - 230), Gdiplus::Point(0, UI_H),
-                                      Gdiplus::Color(0, 16, 18, 22), Gdiplus::Color(245, 16, 18, 22));
+    Gdiplus::LinearGradientBrush fade(Gdiplus::Point(216, UI_H - 230), Gdiplus::Point(216, UI_H),
+                                      Gdiplus::Color(0, 18, 14, 11), Gdiplus::Color(245, 18, 14, 11));
     fade.SetWrapMode(Gdiplus::WrapModeTileFlipXY);  // default tiling paints a dark seam on the first row
-    g.FillRectangle(&fade, 0, UI_H - 229, UI_HERO_W, 229);
+    g.FillRectangle(&fade, 216, UI_H - 229, UI_HERO_W - 216, 229);
 
     Gdiplus::FontFamily ff(L"Segoe UI");
     Gdiplus::Font fTag(&ff, 11, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
     Gdiplus::Font fStatus(&ff, 20, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
     Gdiplus::Font fSmall(&ff, 12, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-    Gdiplus::SolidBrush orange(Gdiplus::Color(255, 255, 92, 40)), white(Gdiplus::Color(255, 240, 243, 246)),
-        muted(Gdiplus::Color(255, 150, 158, 170)), green(Gdiplus::Color(255, 60, 220, 130)), red(Gdiplus::Color(255, 240, 80, 70));
-    g.DrawString(L"PC NATIVE PORT", -1, &fTag, Gdiplus::PointF(32, UI_H - 112), &orange);
+    Gdiplus::SolidBrush orange(Gdiplus::Color(255, 226, 132, 67)), white(Gdiplus::Color(255, 244, 232, 215)),
+        muted(Gdiplus::Color(255, 181, 160, 139)), green(Gdiplus::Color(255, 145, 195, 133)), red(Gdiplus::Color(255, 220, 86, 62));
+    Gdiplus::SolidBrush rail(Gdiplus::Color(255, 18, 14, 11));
+    g.FillRectangle(&rail, 0, 0, 216, UI_H);
+    Gdiplus::Font fBrand(&ff, 16, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+    g.DrawString(L"RUSHLAUNCHER", -1, &fBrand, Gdiplus::PointF(24, 48), &white);
+    g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(24, 74), &orange);
+    g.DrawString(T(S_GAMEDIR), -1, &fSmall, Gdiplus::PointF(24, 470), &muted);
     const wchar_t *status = g_gameRunning ? T(S_RUNNING) : (g_gameDirOk ? T(S_READY) : T(S_NOTFOUND));
     Gdiplus::SolidBrush *dot = g_gameRunning ? &orange : (g_gameDirOk ? &green : &red);
-    g.FillEllipse(dot, 32, UI_H - 85, 10, 10);
-    g.DrawString(status, -1, &fStatus, Gdiplus::PointF(48, UI_H - 94), &white);
-    g.DrawString(T(S_VERSION), -1, &fSmall, Gdiplus::PointF(32, UI_H - 58), &muted);
-    g.DrawString(L"Launcher v" OLAUNCHER_VERSION, -1, &fSmall, Gdiplus::PointF(32, UI_H - 40), &muted);
+    g.FillEllipse(dot, 24, 498, 8, 8);
+    g.DrawString(status, -1, &fSmall, Gdiplus::PointF(40, 492), &white);
 }
 
 static void DrawPanel(HDC hdc)
@@ -353,26 +383,58 @@ static void DrawPanel(HDC hdc)
     HBRUSH eb = CreateSolidBrush(COLOR_BORDER); FillRect(hdc, &edge, eb); DeleteObject(eb);
 
     SetBkMode(hdc, TRANSPARENT);
-    // tab row underline
-    RECT tabLine = { UI_PANEL_X, 46, UI_PANEL_X + 184, 47 };
-    HBRUSH tl = CreateSolidBrush(COLOR_BORDER); FillRect(hdc, &tabLine, tl); DeleteObject(tl);
     if (g_tab == 1) { PlDrawPanel(hdc); return; }
 
+    if (g_tab == 0)
+    {
+        RECT card = { UI_PANEL_X, 24, UI_PANEL_X + UI_PANEL_W, 300 };
+        FillRound(hdc, card, 14, RGB(52, 36, 26), COLOR_BORDER);
+        SelectObject(hdc, g_hFontPlay); SetTextColor(hdc, COLOR_TEXT_PRIMARY);
+        const wchar_t *homeTitle = T(S_HOME_TITLE);
+        TextOutW(hdc, UI_PANEL_X + 22, 52, homeTitle, (int)wcslen(homeTitle));
+        SelectObject(hdc, g_hFontUI); SetTextColor(hdc, COLOR_TEXT_MUTED);
+        const wchar_t *st = g_gameRunning ? T(S_RUNNING) : (g_gameDirOk ? T(S_READY) : T(S_NOTFOUND));
+        TextOutW(hdc, UI_PANEL_X + 22, 94, st, (int)wcslen(st));
+        const wchar_t *homeHint = T(S_HOME_HINT);
+        TextOutW(hdc, UI_PANEL_X + 22, 126, homeHint, (int)wcslen(homeHint));
+        {   // profile in use + play time (Perfis tab)
+            wchar_t line[160];
+            ULONGLONG secs = ProfPlaySeconds(g_config.playerName);
+            if (g_gameRunning && g_playStartTick) secs += (GetTickCount64() - g_playStartTick) / 1000;
+            SetTextColor(hdc, COLOR_TEXT_PRIMARY);
+            swprintf_s(line, L"%ls: %ls", T(S_HOME_PROFILE), g_config.playerName);
+            TextOutW(hdc, UI_PANEL_X + 22, 182, line, (int)wcslen(line));
+            swprintf_s(line, L"%ls: %ls", T(S_HOME_PLAYTIME), ProfFmtPlay(secs).c_str());
+            TextOutW(hdc, UI_PANEL_X + 22, 208, line, (int)wcslen(line));
+            SetTextColor(hdc, COLOR_TEXT_MUTED);
+        }
+        // game folder (was the "Instalação" tab): "…" picks the copy and, when it is not final, the patch
+        SetTextColor(hdc, COLOR_TEXT_PRIMARY);
+        TextOutW(hdc, UI_PANEL_X, 320, T(S_GAMEDIR), (int)wcslen(T(S_GAMEDIR)));
+        RECT gp = { UI_PANEL_X, 340, UI_PANEL_X + UI_PANEL_W - 48, 372 };
+        FillRound(hdc, gp, 8, COLOR_BG_INPUT, g_gameDirOk ? COLOR_BORDER : COLOR_ACCENT_RED);
+        SetTextColor(hdc, COLOR_TEXT_MUTED);
+        RECT gh = { UI_PANEL_X, 380, UI_PANEL_X + UI_PANEL_W, 520 };
+        DrawTextW(hdc, T(S_INSTALL_HINT), -1, &gh, DT_LEFT | DT_WORDBREAK);
+        return;
+    }
+    if (g_tab == 3) { ProfDrawPanel(hdc); return; }
+    if (g_tab == 4) { PhDrawPanel(hdc); return; }
+
+    SelectObject(hdc, g_hFontPlay);
+    SetTextColor(hdc, COLOR_TEXT_PRIMARY);
+    TextOutW(hdc, UI_PANEL_X, 20, T(S_SETTINGS), (int)wcslen(T(S_SETTINGS)));
     SelectObject(hdc, g_hFontUI);
     SetTextColor(hdc, COLOR_TEXT_PRIMARY);
     const int half = (UI_PANEL_W - 12) / 2, X2 = UI_PANEL_X + half + 12;
     struct { int x, y; const wchar_t *t; } labels[] = {
         { UI_PANEL_X, 58, T(S_RES) }, { X2, 58, T(S_MODE) }, { UI_PANEL_X, 120, T(S_TEXTLANG) }, { X2, 120, T(S_VOICELANG) },
-        { UI_PANEL_X, 256, T(S_PLAYER) }, { X2, 256, T(S_PHOTO) }, { UI_PANEL_X, 320, T(S_GAMEDIR) }, { UI_PANEL_X, 384, T(S_SAVEDIR) } };
+        { UI_PANEL_X, 256, T(S_PHOTO) }, { UI_PANEL_X, 320, T(S_SAVEDIR) } };
     for (auto &l : labels) TextOutW(hdc, l.x, l.y, l.t, (int)wcslen(l.t));
 
     // input boxes behind the borderless edits
-    RECT r0 = { UI_PANEL_X, 276, UI_PANEL_X + half, 308 };
     RECT r1 = { UI_PANEL_X, 340, UI_PANEL_X + UI_PANEL_W - 48, 372 };
-    RECT r2 = { UI_PANEL_X, 404, UI_PANEL_X + UI_PANEL_W - 48, 436 };
-    FillRound(hdc, r0, 8, COLOR_BG_INPUT, COLOR_BORDER);
-    FillRound(hdc, r1, 8, COLOR_BG_INPUT, g_gameDirOk ? COLOR_BORDER : COLOR_ACCENT_RED);
-    FillRound(hdc, r2, 8, COLOR_BG_INPUT, COLOR_BORDER);
+    FillRound(hdc, r1, 8, COLOR_BG_INPUT, COLOR_BORDER);
 }
 
 static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
@@ -384,30 +446,36 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
     bool disabled = (di->itemState & ODS_DISABLED) != 0;
     wchar_t text[128] = {};
     GetWindowTextW(di->hwndItem, text, 128);
-    FillRect(hdc, &r, g_hBrushCard);
+    bool isNav = id == ID_TAB_HOME || id == ID_TAB_SETTINGS || id == ID_TAB_PLAYLIST || id == ID_TAB_SETUP || id == ID_TAB_PHOTOS;
+    HBRUSH ownerBg = isNav ? CreateSolidBrush(COLOR_BG_MAIN) : g_hBrushCard;
+    FillRect(hdc, &r, ownerBg);
+    if (isNav) DeleteObject(ownerBg);
     SetBkMode(hdc, TRANSPARENT);
 
-    if (id == ID_TAB_SETTINGS || id == ID_TAB_PLAYLIST)
+    if (isNav)
     {
-        bool active = (id == ID_TAB_PLAYLIST) == (g_tab == 1);
-        SelectObject(hdc, g_hFontSmallCaps);
+        bool active = (id == ID_TAB_HOME && g_tab == 0) || (id == ID_TAB_PLAYLIST && g_tab == 1) ||
+                      (id == ID_TAB_SETTINGS && g_tab == 2) || (id == ID_TAB_SETUP && g_tab == 3) || (id == ID_TAB_PHOTOS && g_tab == 4);
+        HBRUSH nav = CreateSolidBrush(active ? RGB(51, 36, 27) : RGB(18, 14, 11));
+        FillRound(hdc, r, 8, active ? RGB(51, 36, 27) : RGB(18, 14, 11), active ? COLOR_BORDER : RGB(18, 14, 11));
+        DeleteObject(nav);
+        SelectObject(hdc, active ? g_hFontUIBold : g_hFontUI);
         SetTextColor(hdc, active ? COLOR_TEXT_PRIMARY : COLOR_TEXT_MUTED);
-        RECT rt = r; rt.bottom -= 2;
+        RECT rt = r; rt.left += 16; rt.bottom -= 2;
         DrawTextW(hdc, text, -1, &rt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         if (active)
         {
-            SIZE sz = {}; GetTextExtentPoint32W(hdc, text, (int)wcslen(text), &sz);
-            RECT u = { r.left, r.bottom - 2, r.left + sz.cx, r.bottom };
+            RECT u = { r.left, r.top + 8, r.left + 3, r.bottom - 8 };
             HBRUSH ub = CreateSolidBrush(COLOR_ACCENT_ORANGE); FillRect(hdc, &u, ub); DeleteObject(ub);
         }
         return;
     }
-    bool isToggle = (id == ID_PL_ENABLE || id == ID_PL_SHUFFLE || id == ID_VSYNC_CHK || id == ID_DISCORD_CHK || id == ID_D3DDEBUG_CHK || id == ID_VERBOSE_CHK || id == ID_GAMEPLAY_CHK || id == ID_SKIPINTRO_CHK || id == ID_BTN_ADVANCED);
+    bool isToggle = (id == ID_PL_ENABLE || id == ID_PL_SHUFFLE || id == ID_VSYNC_CHK || id == ID_DISCORD_CHK || id == ID_D3DDEBUG_CHK || id == ID_VERBOSE_CHK || id == ID_SKIPINTRO_CHK || id == ID_BTN_ADVANCED || id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL);
     if (isToggle)
     {
         bool on = id == ID_PL_ENABLE ? g_config.musicEnabled != 0 : id == ID_PL_SHUFFLE ? g_config.musicShuffle != 0 :
                   id == ID_VSYNC_CHK ? g_vsyncOn : id == ID_DISCORD_CHK ? g_discordOn : id == ID_D3DDEBUG_CHK ? g_d3dDebugOn :
-                  id == ID_VERBOSE_CHK ? g_verboseOn : id == ID_GAMEPLAY_CHK ? g_quickGameplayOn : id == ID_SKIPINTRO_CHK ? g_skipIntroOn : g_showAdvanced;
+                  id == ID_VERBOSE_CHK ? g_verboseOn : id == ID_SKIPINTRO_CHK ? g_skipIntroOn : (id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL) ? ProfUnlockSwitchOn(id) : g_showAdvanced;
         if (id == ID_BTN_ADVANCED)
         {   // disclosure row
             SelectObject(hdc, g_hFontUI);
@@ -435,16 +503,16 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
     if (primary)
     {
         fill = g_gameRunning ? COLOR_ACCENT_RED : COLOR_ACCENT_ORANGE;
-        if (pressed) fill = g_gameRunning ? RGB(200, 45, 45) : RGB(220, 62, 16);
-        if (disabled) { fill = RGB(70, 60, 56); fg = COLOR_TEXT_MUTED; }
+        if (pressed) fill = g_gameRunning ? RGB(184, 66, 49) : RGB(194, 103, 50);
+        if (disabled) { fill = RGB(74, 58, 45); fg = COLOR_TEXT_MUTED; }
         border = fill;
     }
     else
     {
-        fill = pressed ? RGB(48, 54, 64) : RGB(38, 43, 51);
+        fill = pressed ? RGB(63, 45, 33) : RGB(49, 35, 26);
         border = COLOR_BORDER;
         if (disabled) fg = COLOR_TEXT_MUTED;
-        if (id == ID_BTN_UPDATE && g_updateKnown && g_updateLast.status == UPD_NEWER) { border = COLOR_ACCENT_ORANGE; fg = RGB(255, 140, 90); }
+        if (id == ID_BTN_UPDATE && g_updateKnown && g_updateLast.status == UPD_NEWER) { border = COLOR_ACCENT_ORANGE; fg = RGB(239, 164, 103); }
     }
     FillRound(hdc, r, primary ? 12 : 8, fill, border);
     SelectObject(hdc, primary ? g_hFontPlay : g_hFontUI);
@@ -458,10 +526,10 @@ static void DrawComboItem(const DRAWITEMSTRUCT *di)
     wchar_t text[128] = {};
     SendMessageW(di->hwndItem, CB_GETLBTEXT, di->itemID, (LPARAM)text);
     bool sel = (di->itemState & ODS_SELECTED) && !(di->itemState & ODS_COMBOBOXEDIT);
-    HBRUSH b = CreateSolidBrush(sel ? RGB(60, 40, 32) : COLOR_BG_INPUT);
+    HBRUSH b = CreateSolidBrush(sel ? RGB(66, 44, 31) : COLOR_BG_INPUT);
     FillRect(di->hDC, &di->rcItem, b); DeleteObject(b);
     SetBkMode(di->hDC, TRANSPARENT);
-    SetTextColor(di->hDC, sel ? RGB(255, 140, 90) : COLOR_TEXT_PRIMARY);
+    SetTextColor(di->hDC, sel ? RGB(239, 164, 103) : COLOR_TEXT_PRIMARY);
     SelectObject(di->hDC, g_hFontUI);
     RECT r = di->rcItem; r.left += 10;
     DrawTextW(di->hDC, text, -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -500,7 +568,6 @@ static void ReadUiIntoConfig()
     g_config.vsync = g_vsyncOn ? 1 : 0;
     g_config.d3d12Debug = g_d3dDebugOn ? 1 : 0;
     g_config.verboseLog = g_verboseOn ? 1 : 0;
-    g_config.quickGameplay = g_quickGameplayOn ? 1 : 0;
     g_config.skipIntro = g_skipIntroOn ? 1 : 0;
     wcscpy_s(g_config.photoFormat, 8, SendMessageW(g_hPhotoFmtCombo, CB_GETCURSEL, 0, 0) == 1 ? L"jpg" : L"png");
     wcscpy_s(g_config.uiLang, 8, kUiLangCodes[g_uiLang]);
@@ -561,7 +628,6 @@ static void ApplyUiLanguage(HWND hwnd)
     SetWindowTextW(g_hAdvBtn, T(S_ADV));
     SetWindowTextW(g_hD3DDebugChk, T(S_D3DDBG));
     SetWindowTextW(g_hVerboseChk, T(S_VERBOSE));
-    SetWindowTextW(g_hGameplayChk, T(S_GAMEPLAY));
     SetWindowTextW(g_hBtnOpenGame, T(S_BTN_GAME));
     SetWindowTextW(g_hBtnOpenSave, T(S_BTN_SAVES));
     SetWindowTextW(g_hClearLogBtn, T(S_CLEAR));
@@ -569,6 +635,8 @@ static void ApplyUiLanguage(HWND hwnd)
     SetWindowTextW(g_hLogBtn, g_showLog ? T(S_HIDELOG) : T(S_SHOWLOG));
     SetWindowTextW(g_hBtnLaunch, !IsWindowEnabled(g_hBtnLaunch) ? T(S_PREP) : g_gameRunning ? T(S_CLOSE) : T(S_PLAY));
     if (g_hTabSettings) PlApplyLanguage();
+    if (g_hProfList) ProfApplyLanguage();
+    if (g_hPhList) PhApplyLanguage();
     InvalidateRect(hwnd, nullptr, TRUE);
 }
 
@@ -578,6 +646,7 @@ static void ApplyUiLanguage(HWND hwnd)
 // at the first screens. JOGAR on a new install therefore runs it a few times on its own ("warm-up"): each
 // round lets it record shaders until nothing new shows up for a while, closes it, translates, and repeats.
 #define TIMER_WARMUP      0x7701
+#define TIMER_PLAYTIME    0x7702
 #define WARMUP_MAX_ROUNDS 3
 static int g_warmRound = 0;           // > 0 while warming up
 static int g_warmDumpsBefore = 0, g_warmLastCount = 0;
@@ -610,6 +679,7 @@ static void BeginShaderPrep(HWND hwnd, bool launch)
 
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    if (msg == WM_NOTIFY && PhHandleNotify(hwnd, (NMHDR *)lParam)) return 0;
     if (g_hTabSettings) { LRESULT plr = 0; if (PlHandleMessage(hwnd, msg, wParam, lParam, &plr)) return plr; }
     switch (msg)
     {
@@ -630,7 +700,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         GetEffectiveGameDir(&g_config, initialGameDir, MAX_PATH);
         if (g_config.gamePath[0] == L'\0') wcscpy_s(g_config.gamePath, MAX_PATH, initialGameDir);
         LoadDiscordIni();
-        g_vsyncOn = g_config.vsync != 0; g_d3dDebugOn = g_config.d3d12Debug != 0; g_verboseOn = g_config.verboseLog != 0; g_quickGameplayOn = g_config.quickGameplay != 0; g_skipIntroOn = g_config.skipIntro != 0;
+        g_vsyncOn = g_config.vsync != 0; g_d3dDebugOn = g_config.d3d12Debug != 0; g_verboseOn = g_config.verboseLog != 0; g_skipIntroOn = g_config.skipIntro != 0;
 
         g_uiLang = 0;
         for (int i = 0; i < 3; ++i) if (_wcsicmp(g_config.uiLang, kUiLangCodes[i]) == 0) g_uiLang = i;
@@ -651,7 +721,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         // game text / voice language (filled by ApplyUiLanguage)
         g_hTextLangCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 140, HALF, 300, hwnd, (HMENU)ID_TEXTLANG_COMBO, nullptr, nullptr);
         g_hVoiceLangCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 140, HALF, 300, hwnd, (HMENU)ID_VOICELANG_COMBO, nullptr, nullptr);
-        g_hPhotoFmtCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 276, HALF, 200, hwnd, (HMENU)ID_PHOTOFMT_COMBO, nullptr, nullptr);
+        g_hPhotoFmtCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 276, HALF, 200, hwnd, (HMENU)ID_PHOTOFMT_COMBO, nullptr, nullptr);
         HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo };
         for (HWND c : combos) SetWindowTheme(c, L"DarkMode_CFD", nullptr);
 
@@ -661,17 +731,16 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_hSkipIntroChk = CreateWindowW(L"BUTTON", L"", od, X, 226, W, 24, hwnd, (HMENU)ID_SKIPINTRO_CHK, nullptr, nullptr);
 
         DWORD es = WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL;
-        g_hPlayerEdit = CreateWindowW(L"EDIT", g_config.playerName, es, X + 10, 283, HALF - 20, 20, hwnd, (HMENU)ID_PLAYER_EDIT, nullptr, nullptr);
+        g_hPlayerEdit = CreateWindowW(L"EDIT", g_config.playerName, es & ~WS_VISIBLE, X + 10, 283, HALF - 20, 20, hwnd, (HMENU)ID_PLAYER_EDIT, nullptr, nullptr);
         SendMessageW(g_hPlayerEdit, EM_LIMITTEXT, 20, 0);
         g_hGamePathEdit = CreateWindowW(L"EDIT", g_config.gamePath, es, X + 10, 347, W - 68, 20, hwnd, (HMENU)ID_GAME_PATH_EDIT, nullptr, nullptr);
         CreateWindowW(L"BUTTON", L"…", od, X + W - 40, 340, 40, 32, hwnd, (HMENU)ID_GAME_PATH_BROWSE, nullptr, nullptr);
-        g_hSaveEdit = CreateWindowW(L"EDIT", g_config.savePath, es, X + 10, 411, W - 68, 20, hwnd, (HMENU)ID_SAVE_EDIT, nullptr, nullptr);
-        CreateWindowW(L"BUTTON", L"…", od, X + W - 40, 404, 40, 32, hwnd, (HMENU)ID_SAVE_BROWSE, nullptr, nullptr);
+        g_hSaveEdit = CreateWindowW(L"EDIT", g_config.savePath, es, X + 10, 347, W - 68, 20, hwnd, (HMENU)ID_SAVE_EDIT, nullptr, nullptr);
+        CreateWindowW(L"BUTTON", L"…", od, X + W - 40, 340, 40, 32, hwnd, (HMENU)ID_SAVE_BROWSE, nullptr, nullptr);
 
         g_hAdvBtn = CreateWindowW(L"BUTTON", L"", od, X, 450, W, 24, hwnd, (HMENU)ID_BTN_ADVANCED, nullptr, nullptr);
         g_hD3DDebugChk = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, X, 476, W, 24, hwnd, (HMENU)ID_D3DDEBUG_CHK, nullptr, nullptr);
         g_hVerboseChk = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, X, 502, W, 24, hwnd, (HMENU)ID_VERBOSE_CHK, nullptr, nullptr);
-        g_hGameplayChk = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, X, 528, W, 22, hwnd, (HMENU)ID_GAMEPLAY_CHK, nullptr, nullptr);
 
         g_hBtnLaunch = CreateWindowW(L"BUTTON", L"", od, X, UI_H - 112, W, 56, hwnd, (HMENU)ID_BTN_LAUNCH, nullptr, nullptr);
         int bw = (W - 16) / 3;
@@ -686,8 +755,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_hClearLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 24, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_CLEAR_LOG, nullptr, nullptr);
         g_hCopyLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 122, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_COPY_LOG, nullptr, nullptr);
         g_hBtnKill = nullptr;
-        g_hBtnUpdate = CreateWindowW(L"BUTTON", L"", od, UI_HERO_W - 214, UI_H - 50, 190, 30, hwnd, (HMENU)ID_BTN_UPDATE, nullptr, nullptr);
+        g_hBtnUpdate = CreateWindowW(L"BUTTON", L"", od, 16, UI_H - 48, 184, 30, hwnd, (HMENU)ID_BTN_UPDATE, nullptr, nullptr);
         PlCreateControls(hwnd);
+        ProfCreateControls(hwnd);
+        PhCreateControls(hwnd);
 
         EnumChildWindows(hwnd, [](HWND h, LPARAM) -> BOOL {
             SendMessageW(h, WM_SETFONT, (WPARAM)(GetDlgCtrlID(h) == ID_LOG_EDIT ? g_hFontLog : g_hFontUI), TRUE);
@@ -700,10 +771,13 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         {
             int argc = 0; LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
             for (int i = 1; argv && i + 1 < argc; ++i)
+                if (!_wcsicmp(argv[i], L"-patch")) wcscpy_s(g_cmdPatchDir, MAX_PATH, argv[i + 1]);
+            for (int i = 1; argv && i + 1 < argc; ++i)
             {
                 if (_wcsicmp(argv[i], L"-setup") != 0) continue;
                 wchar_t sm[MAX_PATH], sr[MAX_PATH]; std::wstring err;
                 if (!FindGameCopy(argv[i + 1], sm, sr)) LogPrintf(L"[Setup] cópia do jogo não encontrada em %ls\r\n", argv[i + 1]);
+                else if (GameCopyVersion(sm) != kFinalVersion && !OfferGamePatch(hwnd, sm, sr)) LogPrintf(L"[Setup] cópia não está na versão %ls\r\n", kFinalVersion);
                 else if (!SetupGameFolder(sm, sr, g_exeDir, err)) LogPrintf(L"[Setup] falhou: %ls\r\n", err.c_str());
                 else
                 {
@@ -770,6 +844,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_gameRunning = true;
         SetLaunchButtonState();
         if (g_warmRound) { EnableWindow(g_hBtnLaunch, FALSE); SetWindowTextW(g_hBtnLaunch, T(S_PREP)); return 0; }
+        g_playStartTick = GetTickCount64(); g_playProfile = g_config.playerName;
+        SetTimer(hwnd, TIMER_PLAYTIME, 60000, nullptr);  // keeps the play time on the home card current
         if (g_discordOn)
         {
             bool ok = g_discord.Connect(g_discordAppId) && g_discord.SetPlaying((long long)time(nullptr));
@@ -793,6 +869,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
 
     case WM_TIMER:
+        if (wParam == TIMER_PLAYTIME) { if (g_tab == 0) InvalidateRect(hwnd, nullptr, FALSE); return 0; }
         if (wParam == TIMER_WARMUP)
         {
             if (!g_warmRound) { KillTimer(hwnd, TIMER_WARMUP); return 0; }
@@ -886,6 +963,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_GAME_EXITED:
         g_gameRunning = false;
+        if (g_playStartTick)
+        {
+            ULONGLONG secs = (GetTickCount64() - g_playStartTick) / 1000;
+            ProfAddPlaySeconds(g_playProfile, secs);
+            LogPrintf(L"[Perfis] sessão de %ls (%ls); total: %ls\r\n", ProfFmtPlay(secs).c_str(), g_playProfile.c_str(), ProfFmtPlay(ProfPlaySeconds(g_playProfile)).c_str());
+            g_playStartTick = 0;
+            KillTimer(hwnd, TIMER_PLAYTIME);
+        }
         if (g_warmRound)
         {   // end of a warm-up round: translate what it recorded (the next round or the game starts afterwards)
             KillTimer(hwnd, TIMER_WARMUP);
@@ -919,6 +1004,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     {
         int id = LOWORD(wParam);
         int code = HIWORD(wParam);
+        if (ProfHandleCommand(hwnd, id, code)) return 0;
+        if (PhHandleCommand(hwnd, id, code)) return 0;
         switch (id)
         {
         case ID_BTN_LAUNCH:
@@ -970,7 +1057,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             return 0;
         case ID_D3DDEBUG_CHK: g_d3dDebugOn = !g_d3dDebugOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_VERBOSE_CHK: g_verboseOn = !g_verboseOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
-        case ID_GAMEPLAY_CHK: g_quickGameplayOn = !g_quickGameplayOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_SKIPINTRO_CHK: g_skipIntroOn = !g_skipIntroOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_BTN_UPDATE:
             if (g_updateKnown && g_updateLast.status == UPD_NEWER && !g_updateChecking)

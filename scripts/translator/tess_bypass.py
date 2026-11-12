@@ -116,7 +116,7 @@ def build(game, vs_h, ds_path):
     src.append('static uint pc_[16];')
     src.append(dst)
     lb = lbody[:lbody.index('  VSOut o;')]   # the LS exports nothing: drop the output block
-    lb = '\n'.join(l for l in lb.splitlines() if not re.fullmatch(r'\s*float4 (param\d+|pos\d)_o = 0;', l))
+    lb = '\n'.join(l for l in lb.splitlines() if not re.fullmatch(r'\s*(precise )?float4 (param\d+|pos\d)_o = 0;', l))
     if re.search(r'\b(param\d+|pos\d)_o\b', lb): raise RuntimeError('LS writes exports')
     src.append('void ls_main(' + lpar + ') {' + lb + '\n}')
     src.append('VSOut ds_main(uint vid) {' + dbody)
@@ -130,7 +130,8 @@ def build(game, vs_h, ds_path):
     text = '\n'.join(src) + '\n'
     return text, sm6
 
-def run(game, skip_existing=False, log=print, cancelled=lambda: False):
+def run(game, skip_existing=False, log=print, cancelled=lambda: False, changed_only=False):
+    """changed_only: retranslate everything but recompile only when the generated HLSL differs (translator revision bump)."""
     tdir = os.path.join(game, 'shaders', 'translated')
     os.makedirs(tdir, exist_ok=True)
     ok = fail = 0
@@ -142,6 +143,8 @@ def run(game, skip_existing=False, log=print, cancelled=lambda: False):
         if cancelled(): break
         try:
             text, sm6 = build(game, vs_h, ds_path)
+            if changed_only and os.path.exists(base + '.dxil.cso') and os.path.exists(base + '.hlsl'):
+                if open(base + '.hlsl', encoding='utf-8').read() == text: continue
             open(base + '.hlsl', 'w', encoding='utf-8').write(text)
             d = hlslc.compile_to_bytes(b'// sm6\n' + text.encode(), 'vs_6_0')
             if not d: raise RuntimeError('dxc compile failed: ' + hlslc._dxc(SM6 + text.encode(), 'vs_6_0')[1][-300:])

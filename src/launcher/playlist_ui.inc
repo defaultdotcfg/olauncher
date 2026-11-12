@@ -20,6 +20,8 @@
 
 #define ID_TAB_SETTINGS   1040
 #define ID_TAB_PLAYLIST   1041
+#define ID_TAB_HOME       1058
+#define ID_TAB_SETUP      1059
 #define ID_PL_COMBO       1042
 #define ID_PL_NEW         1043
 #define ID_PL_RENAME      1044
@@ -42,7 +44,7 @@
 enum PlStr {
     P_TAB_PLAYLIST, P_PLAYLIST, P_NEW, P_RENAME, P_DELETE, P_ENABLE, P_SHUFFLE, P_VOLUME, P_ADDFILES, P_ADDFOLDER,
     P_SEARCH, P_EMPTY, P_EMPTY2, P_HINT, P_NONE, P_DEFAULTNAME, P_CONFIRM_DEL, P_NAME_EXISTS, P_SONGS, P_PREVIEW,
-    P_NOTHING, P_REMOVE, P_PICK_FOLDER, P_NO_MATCH, P_NEED_PLAYLIST, P_GAME_NOTE, P_COUNT
+    P_NOTHING, P_REMOVE, P_PICK_FOLDER, P_NO_MATCH, P_NEED_PLAYLIST, P_GAME_NOTE, P_TAB_HOME, P_TAB_SETUP, P_COUNT
 };
 static const wchar_t *kPlStr[P_COUNT][3] = {
     { L"PLAYLIST", L"PLAYLIST", L"PLAYLIST" },
@@ -76,6 +78,8 @@ static const wchar_t *kPlStr[P_COUNT][3] = {
     { L"No jogo, a música original fica em silêncio enquanto a sua playlist toca.",
       L"In game, the original music is muted while your playlist plays.",
       L"En el juego, la música original se silencia mientras suena tu playlist." },
+    { L"Jogar", L"Play", L"Jugar" },
+    { L"Perfis", L"Profiles", L"Perfiles" },
 };
 static const wchar_t *PT(PlStr s) { return kPlStr[s][g_uiLang]; }
 
@@ -84,11 +88,13 @@ static std::vector<std::wstring> g_plNames;   // playlists on disk, sorted
 static std::vector<PlTrack> g_plTracks;       // tracks of the current playlist
 static std::vector<int> g_plView;             // list rows -> g_plTracks index (search filter)
 static int g_plCur = -1;                      // index into g_plNames
-static int g_tab = 0;                         // 0 = settings, 1 = playlist
+static int g_tab = 0;                         // 0 = home, 1 = playlist, 2 = settings, 3 = installation
 static bool g_plEditing = false, g_plEditIsNew = false;
 static UINT g_dragListMsg = 0;
 static int g_plDragFrom = -1;
-static HWND g_hTabSettings = nullptr, g_hTabPlaylist = nullptr;
+static void ProfUpdateVisibility(HWND hwnd);
+static void PhUpdateVisibility(HWND hwnd);
+static HWND g_hTabHome = nullptr, g_hTabSettings = nullptr, g_hTabPlaylist = nullptr, g_hTabSetup = nullptr;
 static HWND g_hPlCombo = nullptr, g_hPlNew = nullptr, g_hPlRename = nullptr, g_hPlDelete = nullptr;
 static HWND g_hPlEnable = nullptr, g_hPlShuffle = nullptr, g_hPlVolume = nullptr, g_hPlAddFiles = nullptr, g_hPlAddFolder = nullptr;
 static HWND g_hPlSearch = nullptr, g_hPlList = nullptr, g_hPlNameEdit = nullptr;
@@ -545,8 +551,12 @@ static void PlCreateControls(HWND hwnd)
 {
     const int X = UI_PANEL_X, W = UI_PANEL_W, HALF = (UI_PANEL_W - 12) / 2;
     DWORD od = WS_CHILD | WS_TABSTOP | BS_OWNERDRAW;
-    g_hTabSettings = CreateWindowW(L"BUTTON", L"", od | WS_VISIBLE, X, 16, 104, 30, hwnd, (HMENU)ID_TAB_SETTINGS, nullptr, nullptr);
-    g_hTabPlaylist = CreateWindowW(L"BUTTON", L"", od | WS_VISIBLE, X + 108, 16, 76, 30, hwnd, (HMENU)ID_TAB_PLAYLIST, nullptr, nullptr);
+    g_hTabHome = CreateWindowW(L"BUTTON", L"", od | WS_VISIBLE, 16, 132, 184, 42, hwnd, (HMENU)ID_TAB_HOME, nullptr, nullptr);
+    // with the playlist tab hidden the other tabs move up one slot
+    const int yPl = 180, ySet = PLAYLIST_HIDDEN ? 180 : 228, ySetup = PLAYLIST_HIDDEN ? 228 : 276;
+    g_hTabPlaylist = CreateWindowW(L"BUTTON", L"", od | (PLAYLIST_HIDDEN ? 0 : WS_VISIBLE), 16, yPl, 184, 42, hwnd, (HMENU)ID_TAB_PLAYLIST, nullptr, nullptr);
+    g_hTabSettings = CreateWindowW(L"BUTTON", L"", od | WS_VISIBLE, 16, ySet, 184, 42, hwnd, (HMENU)ID_TAB_SETTINGS, nullptr, nullptr);
+    g_hTabSetup = CreateWindowW(L"BUTTON", L"", od | WS_VISIBLE, 16, ySetup, 184, 42, hwnd, (HMENU)ID_TAB_SETUP, nullptr, nullptr);
 
     DWORD comboStyle = WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL;
     g_hPlCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 78, W, 300, hwnd, (HMENU)ID_PL_COMBO, nullptr, nullptr);
@@ -573,11 +583,11 @@ static void PlCreateControls(HWND hwnd)
     g_hPlNext = CreateWindowW(L"BUTTON", L"", od, X + 112, 416, 44, 30, hwnd, (HMENU)ID_PL_NEXT, nullptr, nullptr);
 
     // song list over the art
-    g_hPlSearch = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 38, 75, UI_HERO_W - 76 - 100, 20, hwnd, (HMENU)ID_PL_SEARCH, nullptr, nullptr);
+    g_hPlSearch = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 244, 75, UI_HERO_W - 268 - 100, 20, hwnd, (HMENU)ID_PL_SEARCH, nullptr, nullptr);
     g_hPlRemove = CreateWindowW(L"BUTTON", L"", od, UI_HERO_W - 24 - 92, 66, 92, 36, hwnd, (HMENU)ID_PL_REMOVE, nullptr, nullptr);
     g_hPlList = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_TABSTOP | WS_VSCROLL | LBS_OWNERDRAWFIXED | LBS_NOTIFY |
                               LBS_NOINTEGRALHEIGHT | LBS_WANTKEYBOARDINPUT,
-                              24, 114, UI_HERO_W - 48, UI_H - 114 - 44, hwnd, (HMENU)ID_PL_LIST, nullptr, nullptr);
+                              220, 114, UI_HERO_W - 244, UI_H - 114 - 44, hwnd, (HMENU)ID_PL_LIST, nullptr, nullptr);
     SetWindowTheme(g_hPlList, L"DarkMode_Explorer", nullptr);
     MakeDragList(g_hPlList);
     g_dragListMsg = RegisterWindowMessageW(L"commctrl_DragListMsg");  // DRAGLISTMSGSTRING (ANSI in this build)
@@ -593,8 +603,10 @@ static void PlCreateControls(HWND hwnd)
 
 static void PlApplyLanguage()
 {
+    SetWindowTextW(g_hTabHome, PT(P_TAB_HOME));
     SetWindowTextW(g_hTabSettings, T(S_SETTINGS));
     SetWindowTextW(g_hTabPlaylist, PT(P_TAB_PLAYLIST));
+    SetWindowTextW(g_hTabSetup, PT(P_TAB_SETUP));
     SetWindowTextW(g_hPlNew, PT(P_NEW));
     SetWindowTextW(g_hPlRename, PT(P_RENAME));
     SetWindowTextW(g_hPlDelete, PT(P_DELETE));
@@ -613,14 +625,23 @@ static void PlApplyLanguage()
 // Shows the controls of the active tab.
 static void PlUpdateVisibility(HWND hwnd)
 {
-    bool pl = g_tab == 1;
-    int s = pl ? SW_HIDE : SW_SHOW, p = pl ? SW_SHOW : SW_HIDE;
+    bool pl = g_tab == 1, settingsPage = g_tab == 2;
+    int s = settingsPage ? SW_SHOW : SW_HIDE, p = pl ? SW_SHOW : SW_HIDE;
     HWND settings[] = { g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hVsyncChk, g_hDiscordChk,
-                        g_hSkipIntroChk, g_hPlayerEdit, g_hGamePathEdit, g_hSaveEdit, g_hAdvBtn,
-                        GetDlgItem(hwnd, ID_GAME_PATH_BROWSE), GetDlgItem(hwnd, ID_SAVE_BROWSE) };
+                        g_hSkipIntroChk, g_hSaveEdit, g_hAdvBtn, GetDlgItem(hwnd, ID_SAVE_BROWSE) };
     for (HWND h : settings) if (h) ShowWindow(h, s);
-    HWND adv[] = { g_hD3DDebugChk, g_hVerboseChk, g_hGameplayChk };
-    for (HWND h : adv) if (h) ShowWindow(h, !pl && g_showAdvanced ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hGamePathEdit, g_tab == 0 ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hwnd, ID_GAME_PATH_BROWSE), g_tab == 0 ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hSaveEdit, settingsPage ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(hwnd, ID_SAVE_BROWSE), settingsPage ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hBtnLaunch, g_tab == 0 ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hBtnOpenGame, settingsPage ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hBtnOpenSave, settingsPage ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hLogBtn, SW_SHOW);
+    ShowWindow(g_hUiLangCombo, SW_SHOW);
+    ShowWindow(g_hBtnUpdate, g_showLog ? SW_HIDE : SW_SHOW);
+    HWND adv[] = { g_hD3DDebugChk, g_hVerboseChk };
+    for (HWND h : adv) if (h) ShowWindow(h, settingsPage && g_showAdvanced ? SW_SHOW : SW_HIDE);
     HWND plc[] = { g_hPlNew, g_hPlRename, g_hPlDelete, g_hPlEnable, g_hPlShuffle, g_hPlVolume, g_hPlAddFiles, g_hPlAddFolder,
                    g_hPlPlay, g_hPlStop, g_hPlNext, g_hPlSearch, g_hPlRemove };
     for (HWND h : plc) ShowWindow(h, p);
@@ -628,8 +649,12 @@ static void PlUpdateVisibility(HWND hwnd)
     ShowWindow(g_hPlNameEdit, pl && g_plEditing ? SW_SHOW : SW_HIDE);
     ShowWindow(g_hPlList, pl && !g_plView.empty() ? SW_SHOW : SW_HIDE);
     if (pl && g_showLog) { g_showLog = false; LayoutLog(hwnd); }
+    InvalidateRect(g_hTabHome, nullptr, TRUE);
     InvalidateRect(g_hTabSettings, nullptr, TRUE);
     InvalidateRect(g_hTabPlaylist, nullptr, TRUE);
+    InvalidateRect(g_hTabSetup, nullptr, TRUE);
+    ProfUpdateVisibility(hwnd);
+    PhUpdateVisibility(hwnd);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -643,8 +668,8 @@ static void PlSetTab(HWND hwnd, int tab)
 // Left area while the playlist tab is open: title, search box, list frame, empty state.
 static void PlDrawHero(Gdiplus::Graphics &g)
 {
-    Gdiplus::SolidBrush dim(Gdiplus::Color(240, 12, 13, 16));
-    g.FillRectangle(&dim, 0, 0, UI_HERO_W, UI_H);
+    Gdiplus::SolidBrush dim(Gdiplus::Color(240, 30, 22, 17));
+    g.FillRectangle(&dim, 216, 0, UI_HERO_W - 216, UI_H);
     Gdiplus::FontFamily ff(L"Segoe UI");
     Gdiplus::Font fTitle(&ff, 22, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
     Gdiplus::Font fSmall(&ff, 12, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
@@ -652,21 +677,21 @@ static void PlDrawHero(Gdiplus::Graphics &g)
     Gdiplus::SolidBrush white(Gdiplus::Color(255, 240, 243, 246)), muted(Gdiplus::Color(255, 150, 158, 170)),
         orange(Gdiplus::Color(255, 255, 92, 40));
     const wchar_t *name = g_plCur >= 0 ? g_plNames[g_plCur].c_str() : PT(P_NONE);
-    g.DrawString(name, -1, &fTitle, Gdiplus::PointF(22, 18), &white);
+    g.DrawString(name, -1, &fTitle, Gdiplus::PointF(232, 18), &white);
     int total = 0; for (auto &t : g_plTracks) total += t.secs;
     wchar_t info[128]; swprintf_s(info, kPlStr[P_SONGS][g_uiLang], (int)g_plTracks.size(), FmtTime(total).c_str());
     Gdiplus::StringFormat right; right.SetAlignment(Gdiplus::StringAlignmentFar);
-    g.DrawString(info, -1, &fSmall, Gdiplus::RectF(300, 26, UI_HERO_W - 324.f, 20), &right, &muted);
+    g.DrawString(info, -1, &fSmall, Gdiplus::RectF(300, 26, UI_HERO_W - 320.f, 20), &right, &muted);
 
     // search box
     Gdiplus::GraphicsPath box;
-    Gdiplus::RectF sr(24, 66, UI_HERO_W - 48.f - 100, 36);
+    Gdiplus::RectF sr(220, 66, UI_HERO_W - 244.f - 100, 36);
     float r = 8;
     box.AddArc(sr.X, sr.Y, r * 2, r * 2, 180, 90); box.AddArc(sr.GetRight() - r * 2, sr.Y, r * 2, r * 2, 270, 90);
     box.AddArc(sr.GetRight() - r * 2, sr.GetBottom() - r * 2, r * 2, r * 2, 0, 90); box.AddArc(sr.X, sr.GetBottom() - r * 2, r * 2, r * 2, 90, 90);
     box.CloseFigure();
-    Gdiplus::SolidBrush inBg(Gdiplus::Color(255, 18, 20, 24));
-    Gdiplus::Pen inBorder(Gdiplus::Color(255, 48, 54, 64));
+    Gdiplus::SolidBrush inBg(Gdiplus::Color(255, 30, 22, 17));
+    Gdiplus::Pen inBorder(Gdiplus::Color(255, 76, 55, 41));
     g.FillPath(&inBg, &box); g.DrawPath(&inBorder, &box);
 
     Gdiplus::StringFormat center; center.SetAlignment(Gdiplus::StringAlignmentCenter); center.SetLineAlignment(Gdiplus::StringAlignmentCenter);
@@ -674,18 +699,32 @@ static void PlDrawHero(Gdiplus::Graphics &g)
     {   // drop zone
         Gdiplus::Pen dash(Gdiplus::Color(255, 70, 78, 92), 2);
         dash.SetDashStyle(Gdiplus::DashStyleDash);
-        g.DrawRectangle(&dash, 24, 114, UI_HERO_W - 48, UI_H - 114 - 44);
-        g.DrawString(L"♫", -1, &fTitle, Gdiplus::RectF(24, 250, UI_HERO_W - 48.f, 40), &center, &orange);
-        g.DrawString(PT(P_EMPTY), -1, &fBig, Gdiplus::RectF(24, 292, UI_HERO_W - 48.f, 28), &center, &white);
-        g.DrawString(PT(P_EMPTY2), -1, &fSmall, Gdiplus::RectF(24, 322, UI_HERO_W - 48.f, 22), &center, &muted);
+        g.DrawRectangle(&dash, 220, 114, UI_HERO_W - 244, UI_H - 114 - 44);
+        g.DrawString(L"♫", -1, &fTitle, Gdiplus::RectF(220, 250, UI_HERO_W - 244.f, 40), &center, &orange);
+        g.DrawString(PT(P_EMPTY), -1, &fBig, Gdiplus::RectF(220, 292, UI_HERO_W - 244.f, 28), &center, &white);
+        g.DrawString(PT(P_EMPTY2), -1, &fSmall, Gdiplus::RectF(220, 322, UI_HERO_W - 244.f, 22), &center, &muted);
     }
     else if (g_plView.empty())
     {
         wchar_t q[128] = {}, msg[256]; GetWindowTextW(g_hPlSearch, q, 128);
         swprintf_s(msg, kPlStr[P_NO_MATCH][g_uiLang], q);
-        g.DrawString(msg, -1, &fSmall, Gdiplus::RectF(24, 200, UI_HERO_W - 48.f, 22), &center, &muted);
+        g.DrawString(msg, -1, &fSmall, Gdiplus::RectF(220, 200, UI_HERO_W - 244.f, 22), &center, &muted);
     }
-    g.DrawString(PT(P_HINT), -1, &fSmall, Gdiplus::PointF(24, UI_H - 32), &muted);
+    g.DrawString(PT(P_HINT), -1, &fSmall, Gdiplus::PointF(220, UI_H - 32), &muted);
+    Gdiplus::SolidBrush rail(Gdiplus::Color(255, 18, 14, 11));
+    g.FillRectangle(&rail, 0, 0, 216, UI_H);
+    Gdiplus::FontFamily brandFace(L"Segoe UI");
+    Gdiplus::Font brand(&brandFace, 16, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+    Gdiplus::Font cap(&brandFace, 11, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush accent(Gdiplus::Color(255, 226, 132, 67));
+    Gdiplus::SolidBrush ready(Gdiplus::Color(255, 145, 195, 133));
+    Gdiplus::SolidBrush missing(Gdiplus::Color(255, 220, 86, 62));
+    g.DrawString(L"RUSHLAUNCHER", -1, &brand, Gdiplus::PointF(24, 48), &white);
+    g.DrawString(L"v" OLAUNCHER_VERSION, -1, &cap, Gdiplus::PointF(24, 74), &accent);
+    g.DrawString(T(S_GAMEDIR), -1, &fSmall, Gdiplus::PointF(24, 470), &muted);
+    const wchar_t *gameStatus = g_gameRunning ? T(S_RUNNING) : (g_gameDirOk ? T(S_READY) : T(S_NOTFOUND));
+    g.FillEllipse(g_gameDirOk ? &ready : &missing, 24, 498, 8, 8);
+    g.DrawString(gameStatus, -1, &fSmall, Gdiplus::PointF(40, 492), &white);
 }
 
 static void PlDrawPanel(HDC hdc)
@@ -700,7 +739,7 @@ static void PlDrawPanel(HDC hdc)
 
     // preview card
     RECT card = { X, 330, X + W, 458 };
-    FillRound(hdc, card, 10, RGB(22, 25, 30), COLOR_BORDER);
+    FillRound(hdc, card, 10, COLOR_BG_INPUT, COLOR_BORDER);
     SelectObject(hdc, g_hFontSmallCaps);
     SetTextColor(hdc, COLOR_TEXT_MUTED);
     TextOutW(hdc, X + 12, 342, PT(P_PREVIEW), (int)wcslen(PT(P_PREVIEW)));
@@ -847,6 +886,7 @@ static bool PlHandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, L
     {
     case WM_DROPFILES:
     {
+        if (PLAYLIST_HIDDEN) { DragFinish((HDROP)wParam); *res = 0; return true; }
         HDROP drop = (HDROP)wParam;
         UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
         std::vector<std::wstring> paths;
@@ -896,8 +936,10 @@ static bool PlHandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, L
         int id = LOWORD(wParam), code = HIWORD(wParam);
         switch (id)
         {
-        case ID_TAB_SETTINGS: PlSetTab(hwnd, 0); *res = 0; return true;
+        case ID_TAB_HOME: PlSetTab(hwnd, 0); *res = 0; return true;
+        case ID_TAB_SETTINGS: PlSetTab(hwnd, 2); *res = 0; return true;
         case ID_TAB_PLAYLIST: PlSetTab(hwnd, 1); *res = 0; return true;
+        case ID_TAB_SETUP: PlSetTab(hwnd, 3); *res = 0; return true;
         case IDOK: if (g_plEditing) { PlEndEdit(true); *res = 0; return true; } return false;
         case IDCANCEL: if (g_plEditing) { PlEndEdit(false); *res = 0; return true; } return false;
         case ID_PL_NAMEEDIT: if (code == EN_KILLFOCUS && g_plEditing) PlEndEdit(true); *res = 0; return true;

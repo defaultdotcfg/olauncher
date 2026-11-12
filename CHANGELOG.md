@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.1 — versão final do jogo, perfis, fotos e correções gráficas
+
+**Atenção:** a partir desta versão o port mira só a versão final do jogo, **1.80.100.100**. Se a sua cópia for a 1.0.64980.34, o launcher pede a pasta do patch de atualização e aplica as diferenças sozinho (os arquivos do patch são movidos para a pasta do jogo, não copiados).
+
+### Launcher
+- **Aba Perfis**: criar, renomear, excluir (vai para a Lixeira) e escolher o perfil salvo. O nome do perfil é o nome do jogador. Dois interruptores por perfil, só em tempo de execução (o save não é alterado):
+  - **Desbloquear cosméticos**: libera trajes, manobras, lápides, comemorações, veículos e crashtags do modo online.
+  - **Desbloquear tudo (cosméticos e eventos)**: libera também os eventos da carreira.
+- **Aba Fotos**: galeria das fotos tiradas no jogo (F12), com marcação de várias fotos, Marcar/Desmarcar todas, abrir foto, excluir marcadas (Lixeira) e abrir a pasta.
+- A aba Jogar mostra o perfil em uso e as horas de jogo dele, e traz a escolha da pasta do jogo e do patch (a aba Instalação saiu).
+- A opção de ir direto ao gameplay saiu.
+- A aba Playlist está escondida por enquanto, até a função ser melhor integrada ao jogo.
+
+### Jogo
+- Porte para a versão 1.80.100.100.
+- Corrigido o fechamento do jogo durante o vídeo de introdução quando "pular introdução" está desligado.
+- As opções de inicialização do jogo agora chegam a ele (a ponte repassava os argumentos vazios).
+
+### Gráficos
+- Personagens e pilotos voltam a aparecer (cabine, menus, garagem).
+- Rosto com a pele "cristal" e árvores como cartões cinza: causa comum no tradutor (uma leitura de constantes lia o endereço já sobrescrito). Tradutor revisão 4: ao subir de versão, o launcher retraduz os shaders sozinho.
+- Árvores pretas corrigidas (profundidade dos passes de árvore).
+- 12 dos 13 shaders que o tradutor recusava agora são traduzidos; os desenhos de shaders ainda não traduzidos são ignorados em vez de aparecerem como lixo.
+
 ## v0.1.0 — primeira versão pública
 
 Primeira versão do port nativo do **ONRUSH (Xbox One 1.0.64980.34)** para Windows x64 com Direct3D 12. Nenhum arquivo do jogo vem junto: é preciso ter a sua própria cópia do pacote (veja o README).

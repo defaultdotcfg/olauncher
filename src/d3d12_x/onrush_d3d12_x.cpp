@@ -633,7 +633,7 @@ static bool EnsureDXGIFactoryGlobal(HMODULE hExe) {
     return false;
   }
 
-  void **ppFactoryGlobal = (void **)((uint8_t *)hExe + 0x0159E0D0);
+  void **ppFactoryGlobal = (void **)((uint8_t *)hExe + 0x01538AA8);
   if (g_pDXGIFactory2 && *ppFactoryGlobal == g_pDXGIFactory2) {
     return true;
   }
@@ -727,7 +727,7 @@ static bool EnsureDXGIFactoryGlobal(HMODULE hExe) {
 
   g_pDXGIFactory2 = pFactory2;
   WrapFactoryInstance(pFactory2);
-  log_line("[d3d12_x] Initialized [hExe + 0x0159E0D0] with real IDXGIFactory2 "
+  log_line("[d3d12_x] Initialized [hExe + 0x01538AA8] with real IDXGIFactory2 "
            "%p\r\n",
            g_pDXGIFactory2);
   return true;
@@ -1486,7 +1486,7 @@ public:
     HMODULE hExe = GetModuleHandleW(nullptr);
     if (hExe) {
       EnsureDXGIFactoryGlobal(hExe);
-      void **ppFactoryGlobal = (void **)((uint8_t *)hExe + 0x0159E0D0);
+      void **ppFactoryGlobal = (void **)((uint8_t *)hExe + 0x01538AA8);
       if (ppFactoryGlobal && *ppFactoryGlobal) {
         WrapFactoryInstance((IDXGIFactory2 *)*ppFactoryGlobal);
       }
@@ -1513,10 +1513,10 @@ static MockCoreWindowStatic g_mockCoreWindowStatic;
 // - ILaunchActivatedEventArgs ({FBC93E26-A14A-4B4F-82B0-33BED920AF52}) has:
 //     Slot 6 (+0x30): get_Arguments(HSTRING* value)
 //     Slot 7 (+0x38): get_TileId(HSTRING* value)
-// Disassembly of OnActivated (game+0x20F7F0) confirms:
-// - game+0x20F863 calls Slot 6 (+0x30) on IActivatedEventArgs* -> get_Kind
-// - game+0x20DD90 calls QueryInterface(IID_ILaunchActivatedEventArgs)
-// - game+0x20ECEE calls Slot 6 (+0x30) on the returned
+// Disassembly of OnActivated (game+0x21B500) confirms:
+// - game+0x21B573 calls Slot 6 (+0x30) on IActivatedEventArgs* -> get_Kind
+// - game+0x219A80 calls QueryInterface(IID_ILaunchActivatedEventArgs)
+// - game+0x21A9CE calls Slot 6 (+0x30) on the returned
 // ILaunchActivatedEventArgs* -> get_Arguments
 
 // {CF651713-CD08-4FD8-B697-A281B6544E2E}
@@ -1563,11 +1563,11 @@ public:
 };
 
 // ITypedEventHandler<CoreApplicationView*, IActivatedEventArgs*>
-// Game delegate vtable at game+0x13C1D30:
-//   Slot 0 (+0x00): QueryInterface (game+0x20FE80)
-//   Slot 1 (+0x08): AddRef         (game+0x09C930)
-//   Slot 2 (+0x10): Release        (game+0x20FF60)
-//   Slot 3 (+0x18): Invoke         (game+0x2120C0)
+// Game delegate vtable at game+0x1416650:
+//   Slot 0 (+0x00): QueryInterface (game+0x21BB80)
+//   Slot 1 (+0x08): AddRef         (game+0x09FB90)
+//   Slot 2 (+0x10): Release        (game+0x21BC40)
+//   Slot 3 (+0x18): Invoke         (game+0x21DA80)
 MIDL_INTERFACE("A856E674-B0B6-5BC3-BBA8-1BA06E40D4B5")
 IActivatedEventHandlerEra : public IUnknown {
 public:
@@ -1653,10 +1653,35 @@ public:
   HRESULT STDMETHODCALLTYPE get_Arguments(HSTRING *value) override {
     if (!value)
       return E_POINTER;
-    HRESULT hr = CreateHString(L"", value);
+    // The game reads its options (e.g. -giveentitlements) from the launch
+    // arguments (game+0x21B5A9 -> strtok -> option table 0x7D780), not from
+    // the Win32 command line. Forward the process arguments, minus the
+    // program name and the bridge's own flags.
+    std::wstring args;
+    {
+      const wchar_t *p = GetCommandLineW();
+      if (p) {
+        if (*p == L'"') { ++p; while (*p && *p != L'"') ++p; if (*p) ++p; }
+        else while (*p && *p != L' ' && *p != L'\t') ++p;
+        while (*p) {
+          while (*p == L' ' || *p == L'\t') ++p;
+          if (!*p) break;
+          const wchar_t *s = p;
+          while (*p && *p != L' ' && *p != L'\t') ++p;
+          std::wstring tok(s, p - s);
+          if (_wcsicmp(tok.c_str(), L"-skipintro") == 0 || _wcsicmp(tok.c_str(), L"-gameplay") == 0 ||
+              _wcsicmp(tok.c_str(), L"-unlockcosmetics") == 0 ||
+              _wcsicmp(tok.c_str(), L"/gameplay") == 0)
+            continue;
+          if (!args.empty()) args += L' ';
+          args += tok;
+        }
+      }
+    }
+    HRESULT hr = CreateHString(args.c_str(), value);
     log_line("[bridge] ILaunchActivatedEventArgs::get_Arguments -> hr=0x%08lX, "
-             "hstr=%p\r\n",
-             hr, *value);
+             "hstr=%p args='%ls'\r\n",
+             hr, *value, args.c_str());
     return hr;
   }
   HRESULT STDMETHODCALLTYPE get_TileId(HSTRING *value) override {
@@ -1725,11 +1750,11 @@ public:
   }
 
   // Token & delegate lifetime treatment:
-  // In IFrameworkView::Initialize (game+0x20F590), the game constructs the
-  // C++/CX TypedEventHandler delegate (game+0x20E6B0) with refcount = 1, calls
-  // add_Activated (game+0x20F624) passing a stack-local EventRegistrationToken
-  // (&[rbp+0x30]), and immediately calls delegate->Release() (game+0x20F641 ->
-  // game+0x20FF60). Calling AddRef() here retains ownership (refcount 1 -> 2 ->
+  // In IFrameworkView::Initialize (game+0x21B2A0), the game constructs the
+  // C++/CX TypedEventHandler delegate (game+0x21A3A0) with refcount = 1, calls
+  // add_Activated (game+0x21B334) passing a stack-local EventRegistrationToken
+  // (&[rbp+0x30]), and immediately calls delegate->Release() (game+0x21B351 ->
+  // game+0x21BC40). Calling AddRef() here retains ownership (refcount 1 -> 2 ->
   // 1 after Initialize's Release) so the delegate is not freed before
   // CoreApplicationDesktop::_abi_Run invokes it.
   HRESULT STDMETHODCALLTYPE
@@ -1817,7 +1842,7 @@ static MockCoreApplicationView g_mockAppView;
 
 // ICoreImmersiveApplication {1ADA0E3E-E4A2-4123-B451-DC96BF800419} (CoreApplication statics):
 //   6 get_Views(IVectorView<CoreApplicationView>**), 7 CreateNewView(HSTRING, HSTRING, view**),
-//   8 get_MainView(view**). Asked for after the EULA is accepted (exe+0x4A2DDA).
+//   8 get_MainView(view**). Asked for after the EULA is accepted (exe+0x4F651A).
 static const GUID IID_ICoreImmersiveApplicationEra =
     {0x1ada0e3e, 0xe4a2, 0x4123, {0xb4, 0x51, 0xdc, 0x96, 0xbf, 0x80, 0x04, 0x19}};
 
@@ -1857,7 +1882,7 @@ public:
   HRESULT STDMETHODCALLTYPE GetTrustLevel(TrustLevel *l) override { if (l) *l = BaseTrust; return S_OK; }
   virtual HRESULT STDMETHODCALLTYPE get_Views(void **value) {
     // The game treats the slot-6 result as a CoreApplicationView (calls its slot 6 =
-    // get_CoreWindow at exe+0x4A2E7C), so hand back the main view, not a vector.
+    // get_CoreWindow at exe+0x4F65BC), so hand back the main view, not a vector.
     log_line("[bridge] ICoreImmersiveApplication slot 6 -> main view\r\n");
     if (!value) return E_POINTER; *value = static_cast<ICoreApplicationViewEra *>(&g_mockAppView); return S_OK;
   }
@@ -2059,8 +2084,8 @@ public:
              "during native init=%ld).\r\n",
              hrActivated, (long)initAllocCount);
     log_line(
-        "[bridge] NOTE: PatchAllocThunk remains active (+0x066310 -> "
-        "BridgeAlloc, +0x095DB0/+0x095F00 -> DetourThreadAlloc/Free); runtime "
+        "[bridge] NOTE: PatchAllocThunk remains active (+0x069B80 -> "
+        "BridgeAlloc, +0x098EC0/+0x099040 -> DetourThreadAlloc/Free); runtime "
         "compatibility with native allocators is not yet proven.\r\n");
 
     LogAllocatorStateSnapshot("POST-OnActivated", hExe);
@@ -2690,27 +2715,27 @@ static MockDisplayConfigurationStatics g_mockDisplayConfigurationStatics;
 // - ABI::Windows::System::Profile::IAnalyticsInfoStatics
 //     Desktop SDK IID: {1D5EE066-188D-5BA9-4387-ACAEB0E7E305}
 //     Xbox ERA IID   : {8ED5EE10-C3C2-410C-A3C7-32323C5B25C3} (queried at
-//     game+0x060695 / +0x06043B) Inherits directly from IInspectable (Slots
+//     game+0x063C05 / +0x0639AB) Inherits directly from IInspectable (Slots
 //     0..5):
 //       Slot 6 (+0x30): get_VersionInfo(IAnalyticsVersionInfo** value)  [called
-//       at game+0x06139E] Slot 7 (+0x38): get_DeviceForm(HSTRING* value)
+//       at game+0x06494E] Slot 7 (+0x38): get_DeviceForm(HSTRING* value)
 // - ABI::Windows::System::Profile::IAnalyticsVersionInfo
 //     Official IID   : {926130B8-9955-4C74-BDC1-7CD0DECF9B03}
 //     Inherits directly from IInspectable (Slots 0..5):
 //       Slot 6 (+0x30): get_DeviceFamily(HSTRING* value)
 //       Slot 7 (+0x38): get_DeviceFamilyVersion(HSTRING* value)         [called
-//       at game+0x060FBE]
+//       at game+0x06455E]
 //
-// In game+0x0611F0 (tail-called by game+0x2122D0 at +0x2123A5):
+// In game+0x064790 (tail-called by game+0x21DC90 at +0x21DD6C):
 //   1. Calls get_VersionInfo(&[rsp+0x68]) (Slot 6, +0x30)
 //   2. Calls get_DeviceFamilyVersion(&[rsp+0x60]) (Slot 7, +0x38, RDX =
 //   HSTRING*)
 //   3. Calls WindowsGetStringRawBuffer([rsp+0x60], nullptr) -> stores wchar_t*
-//   in RBX (+0x06121D)
-//   4. Calls WindowsDeleteString([rsp+0x60]) (+0x06122F) BEFORE calling
-//   wcstombs(buf, RBX, 31) (+0x061265)
-//   5. Calls strtoull(buf, nullptr, 10) (+0x06127B)
-// To keep RBX valid across the early WindowsDeleteString at +0x06122F,
+//   in RBX (+0x0647BD)
+//   4. Calls WindowsDeleteString([rsp+0x60]) (+0x0647CF) BEFORE calling
+//   wcstombs(buf, RBX, 31) (+0x064805)
+//   5. Calls strtoull(buf, nullptr, 10) (+0x06481B)
+// To keep RBX valid across the early WindowsDeleteString at +0x0647CF,
 // MockAnalyticsVersionInfo retains a pinned HSTRING reference and returns a
 // duplicated handle via WindowsDuplicateString.
 
@@ -2980,26 +3005,28 @@ public:
 
 static MockAnalyticsInfoStatics g_mockAnalyticsInfoStatics;
 
+#include "mock_store.inc"
+
 // ============================================================================
 // Mock Tipado para Windows.Xbox.Services.XboxLiveConfiguration
 // ============================================================================
-// Em game+0x4B3AB0 (xbox::services::xbox_live_app_config::read), chamada por
-// game+0x413B70 (+0x413C7B) <- game+0x498D00 (+0x498D72), o jogo ativa
+// Em game+0x507180 (xbox::services::xbox_live_app_config::read), chamada por
+// game+0x4673D0 (+0x4674DB) <- game+0x4EC130 (+0x4EC1A2), o jogo ativa
 // L"Windows.Xbox.Services.XboxLiveConfiguration" três vezes com o IID Xbox ERA
 // IXboxLiveConfigurationStatics {00193376-6A84-4C67-84A5-3B8A8AAEA712}:
-//   - Bloco 1 (game+0x4B3B84): chama Slot 8 (+0x40) get_SandboxId(HSTRING*
+//   - Bloco 1 (game+0x507254): chama Slot 8 (+0x40) get_SandboxId(HSTRING*
 //   value)
 //     e copia para [r15 + 0x48] (m_sandbox), comparado via _wcsicmp contra
-//     L"RETAIL" (game+0xEDFF40) em game+0x42F633 e game+0x47F150, e contra
-//     "CERT" / "CERT.DEBUG" / "CMSW." em game+0x085CBC..0x085EB0.
-//   - Bloco 2 (game+0x4B3C84): chama Slot 7 (+0x38)
+//     L"RETAIL" (game+0xF47010) em game+0x4830A3 e game+0x4D2500, e contra
+//     "CERT" / "CERT.DEBUG" / "CMSW." em game+0x08853C..0x088730.
+//   - Bloco 2 (game+0x507354): chama Slot 7 (+0x38)
 //   get_PrimaryServiceConfigId(HSTRING* value)
 //     e copia para [r15 + 0x68] (m_scid), passado como 1º argumento (PCWSTR
 //     serviceConfigurationId) para XboxIntegratedMultiplayer.dll!XimInitialize
-//     em game+0x080315..0x0803AF.
-//   - Bloco 3 (game+0x4B3D87): chama Slot 6 (+0x30) get_TitleId(HSTRING*
+//     em game+0x0829E5..0x082A7F.
+//   - Bloco 3 (game+0x507457): chama Slot 6 (+0x30) get_TitleId(HSTRING*
 //   value),
-//     converte em base 10 via wcstol(..., nullptr, 10) em game+0x4B3E62 e grava
+//     converte em base 10 via wcstol(..., nullptr, 10) em game+0x507532 e grava
 //     o uint32_t resultante (0x071190C6 = 118591686) em [r15 + 0x20]
 //     (m_titleId).
 
@@ -3025,10 +3052,10 @@ public:
 //   <mx:XboxLive TitleId="071190C6"
 //   PrimaryServiceConfigId="55f70100-c1b1-4bd8-916d-e23c071190c6" /> 0x071190C6
 //   em decimal = 118591686 (convertido por wcstol(..., nullptr, 10) em
-//   game+0x4B3E62).
-// SandboxId L"RETAIL": string literal presente em game+0xEDFF40 e comparada via
-// _wcsicmp contra [app_config + 0x48] em game+0x42F633 e game+0x47F150 (além
-// das checagens "CERT"/"CERT.DEBUG"/"CMSW." em game+0x085CBC..0x085EB0); ainda
+//   game+0x507532).
+// SandboxId L"RETAIL": string literal presente em game+0xF47010 e comparada via
+// _wcsicmp contra [app_config + 0x48] em game+0x4830A3 e game+0x4D2500 (além
+// das checagens "CERT"/"CERT.DEBUG"/"CMSW." em game+0x08853C..0x088730); ainda
 // assim anotado como hipótese de ambiente de execução no desktop.
 static constexpr const wchar_t kXboxLiveTitleIdDecimal[] = L"118591686";
 static constexpr const wchar_t kXboxLivePrimaryServiceConfigId[] =
@@ -3139,16 +3166,16 @@ static MockXboxLiveConfigurationStatics g_mockXboxLiveConfigurationStatics;
 // Windows.Xbox.Input.Gamepad & IVectorView<IGamepad*> Typed Mocks
 // ============================================================================
 // Xbox ERA IID: {8C4C1BCD-FDAB-4BF8-BDE9-ABB2B1D6FDD3} (queried at
-// game+0x0BD235)
+// game+0x0C1B15)
 //
-// In game+0x0C2F80 (lowapi/input/xbox/platform-xbox.cpp):
+// In game+0x0C7910 (lowapi/input/xbox/platform-xbox.cpp):
 //   1. Calls RoGetActivationFactory("Windows.Xbox.Input.Gamepad") ->
 //   IGamepadStatics
 //   2. Calls IGamepadStatics::get_Gamepads(IVectorView<IGamepad*>** value)
 //   (Slot 6, +0x30, RCX=this, RDX=out)
 //   3. Calls IVectorView<IGamepad*>::get_Size(uint32_t* size) (Slot 7, +0x38,
 //   RCX=this, RDX=&size)
-//      Notice: In game+0x0C2FE8..0x0C2FF3, the game compiler loads the vtable
+//      Notice: In game+0x0C2FE8..0x0C797F, the game compiler loads the vtable
 //      address into R8. The method MUST ONLY write to *size (RDX) and NEVER
 //      read or write R8!
 //   4. If *size == 0, game jumps to game+0x0C3338, releases IVectorView and
@@ -4136,7 +4163,7 @@ static bool QuickGameplayEnabled() {
 static uintptr_t CurrentPhaseVtblRva() {
   uint8_t *hx = (uint8_t *)GetModuleHandleW(nullptr);
   __try {
-    void *cur = *(void **)(hx + 0x016CAC08);
+    void *cur = *(void **)(hx + 0x0167E930);
     return cur ? (uintptr_t)(*(uint8_t **)cur - hx) : 0;
   } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
@@ -4355,14 +4382,14 @@ static void PollInput(RawGamepadReading *pReading) {
   // title / "continue offline" / EULA, controller loading screen) so it goes straight into gameplay.
   // Phase-driven instead of timed, so it copes with variable loading times.
   // Launcher option "Pular vídeos de introdução" (ONRUSH_SKIP_INTRO=1 or -skipintro): press A only
-  // while the intro phase (0x1499660, Codemasters/ONRUSH videos) is active -> stops on the title screen.
+  // while the intro phase (0x142C090, Codemasters/ONRUSH videos) is active -> stops on the title screen.
   {
     static int s_si = -1;
     if (s_si < 0) {
       const wchar_t *cl = GetCommandLineW();
       s_si = (InputEnvFlag("ONRUSH_SKIP_INTRO") || (cl && wcsstr(cl, L"-skipintro"))) ? 1 : 0;
     }
-    if (s_si == 1 && !QuickGameplayEnabled() && CurrentPhaseVtblRva() == 0x1499660) {
+    if (s_si == 1 && !QuickGameplayEnabled() && CurrentPhaseVtblRva() == 0x142C090) {
       static ULONGLONG s_siT0 = GetTickCount64();
       if (((GetTickCount64() - s_siT0) % 700) < 150) pReading->Buttons |= PAD_A;
     }
@@ -4370,12 +4397,12 @@ static void PollInput(RawGamepadReading *pReading) {
   if (QuickGameplayEnabled()) {
     static ULONGLONG s_qgT0 = GetTickCount64();
     const uintptr_t rva = CurrentPhaseVtblRva();
-    // The gameplay phase (0x13C7690) still starts on the controller screen ("A: continue") once it
+    // The gameplay phase (0x141C3C0) still starts on the controller screen ("A: continue") once it
     // finishes loading, so keep pressing for a while after entering it (A is only boost in the tutorial).
     static ULONGLONG s_gpEnter = 0;
-    if (rva == 0x13C7690 && !s_gpEnter) s_gpEnter = GetTickCount64();
-    const bool bootPhase = rva == 0x1499660 || rva == 0x1499840 || rva == 0x1499498 ||
-                           (rva == 0x13C7690 && GetTickCount64() - s_gpEnter < 25000);
+    if (rva == 0x141C3C0 && !s_gpEnter) s_gpEnter = GetTickCount64();
+    const bool bootPhase = rva == 0x142C090 || rva == 0x142C2F0 || rva == 0x142BEC8 ||
+                           (rva == 0x141C3C0 && GetTickCount64() - s_gpEnter < 25000);
     if (bootPhase && ((GetTickCount64() - s_qgT0) % 700) < 150) pReading->Buttons |= PAD_A;
     static uintptr_t s_lastRva = 1;
     if (rva != s_lastRva) { log_line("[gameplay] phase vtbl rva=0x%llX%s\r\n", (unsigned long long)rva, bootPhase ? " (auto A)" : ""); s_lastRva = rva; }
@@ -4422,7 +4449,7 @@ static void PollInput(RawGamepadReading *pReading) {
 static bool IsAdvanceInputHeld() {
   if (ScriptedButtons() & PAD_A) return true;
   // -gameplay: the title check comes through here (not the gamepad poll) when the intro is skipped.
-  if (QuickGameplayEnabled() && CurrentPhaseVtblRva() == 0x1499840) {
+  if (QuickGameplayEnabled() && CurrentPhaseVtblRva() == 0x142C2F0) {
     static ULONGLONG s_t0 = GetTickCount64();
     if (((GetTickCount64() - s_t0) % 700) < 150) return true;
   }
@@ -4439,39 +4466,39 @@ static bool IsAdvanceInputHeld() {
   return false;
 }
 
-// The game keeps 7 "game context" objects in a table at exe+0x169E7C8 (created
-// by the engine constructor at exe+0x1D0210, which allocates 0x850-byte
+// The game keeps 7 "game context" objects in a table at exe+0x1651DB0 (created
+// by the engine constructor at exe+0x1DA750, which allocates 0x850-byte
 // objects). Entering StartScreenPhase dereferences table[1]; when the table was
-// never created the game dies with an access violation at exe+0x1D531E.
+// never created the game dies with an access violation at exe+0x1DFDCE.
 // Forced phase transitions are therefore held back until the table exists.
-// Set by a stub patched into the boot thread (exe+0x20F0F9) once the persistent phase
-// has been constructed AND entered (OnEnter, exe+0x2D4210).
+// Set by a stub patched into the boot thread (exe+0x21ADD9) once the persistent phase
+// has been constructed AND entered (OnEnter, exe+0x2F9200).
 static volatile LONG64 g_bootThreadDone = 0;
 
 static bool PhaseTransitionSafe(HMODULE hExe, void *curPhase) {
   (void)curPhase;
   if (!g_bootThreadDone) return false;
-  // The persistent phase is built on the boot thread (ctor exe+0x2C8240, then
-  // OnEnter exe+0x2D4210 which creates UI screen 0 into exe+0x1782C30[0]).
+  // The persistent phase is built on the boot thread (ctor exe+0x2ED330, then
+  // OnEnter exe+0x2F9200 which creates UI screen 0 into exe+0x18138D0[0]).
   // The main loop runs concurrently; any phase transition before that is done
-  // dereferences null screens (AV at exe+0x30A6A1). So hold back until ready.
+  // dereferences null screens (AV at exe+0x331BA1). So hold back until ready.
   {
-    void **screens = (void **)((uint8_t *)hExe + 0x01782C30);
+    void **screens = (void **)((uint8_t *)hExe + 0x018138D0);
     if (screens[0] == nullptr) {
       static volatile LONG s_notReady = 0;
       if ((InterlockedIncrement(&s_notReady) % 300) == 1) {
-        log_line("[phase] Forced transition HELD: persistent phase not entered yet (screen table exe+0x1782C30[0] is null)\r\n");
+        log_line("[phase] Forced transition HELD: persistent phase not entered yet (screen table exe+0x18138D0[0] is null)\r\n");
       }
       return false;
     }
   }
-  void **table = (void **)((uint8_t *)hExe + 0x0169E7C8);
+  void **table = (void **)((uint8_t *)hExe + 0x01651DB0);
   for (int i = 0; i < 7; ++i) {
     if (table[i] == nullptr) {
       static volatile LONG s_blocked = 0;
       if ((InterlockedIncrement(&s_blocked) % 300) == 1) {
-        log_line("[phase] Forced transition BLOCKED: game context table (exe+0x169E7C8) entry %d is null; "
-                 "engine init (exe+0x1D0210) has not run yet. Skipping to avoid AV at exe+0x1D531E.\r\n", i);
+        log_line("[phase] Forced transition BLOCKED: game context table (exe+0x1651DB0) entry %d is null; "
+                 "engine init (exe+0x1DA750) has not run yet. Skipping to avoid AV at exe+0x1DFDCE.\r\n", i);
       }
       return false;
     }
@@ -4973,7 +5000,7 @@ MockUniversal_GetTrustLevel(void *pThis, TrustLevel *level) {
 // Slot 6 (+0x30): ActivateInstance / get_Current / Create
 static HRESULT STDMETHODCALLTYPE MockUniversal_Method6_GetObj(void *pThis,
                                                               void **ppv, void **ppv2) {
-  // Two shapes seen: Method6(this, &out) and Method6(this, <small value>, &out) (exe+0x9C0D4).
+  // Two shapes seen: Method6(this, &out) and Method6(this, <small value>, &out) (exe+0x9F20D).
   if ((uintptr_t)ppv <= 0x10000 && (uintptr_t)ppv2 > 0x10000 && (uintptr_t)ppv2 < 0x00007FFFFFFE0000ULL)
     *ppv2 = pThis;
   log_line("[mock_winrt] Method 6 (+0x30) called (arg=%p, ret=exe+0x%llX) -> returning universal mock "
@@ -4990,7 +5017,7 @@ static HRESULT STDMETHODCALLTYPE MockUniversal_Method6_GetObj(void *pThis,
 static HRESULT STDMETHODCALLTYPE
 MockUniversal_Method7_Status2(void *pThis, void *p1, DWORD *pOutStatus) {
   auto plausible = [](const void *p) { return (uintptr_t)p > 0x10000 && (uintptr_t)p < 0x00007FFFFFFE0000ULL; };
-  // Also used as IVectorView::get_Size(this, &n) (exe+0x99279): one out pointer in p1 and
+  // Also used as IVectorView::get_Size(this, &n) (exe+0x9C3F9): one out pointer in p1 and
   // garbage in p2 -> report an empty vector.
   if (plausible(p1) && !plausible(pOutStatus)) {
     log_line("[mock_winrt] Method 7 (+0x38) as get_Size -> 0\r\n");
@@ -5669,6 +5696,11 @@ static HRESULT WINAPI HookedRoGetActivationFactory(HSTRING activatableClassId,
     return g_mockDisplayConfigurationStatics.QueryInterface(iid, factory);
   }
 
+  if (raw && wcscmp(raw, L"Windows.ApplicationModel.Store.CurrentApp") == 0) {
+    log_line("[bridge] -> Intercepted Windows.ApplicationModel.Store.CurrentApp (mock license)\r\n");
+    return g_mockCurrentAppStatics.QueryInterface(iid, factory);
+  }
+
   if (raw && wcscmp(raw, L"Windows.System.Profile.AnalyticsInfo") == 0) {
     log_line("[bridge] -> Intercepted Windows.System.Profile.AnalyticsInfo "
              "with typed MockAnalyticsInfoStatics!\r\n");
@@ -5786,6 +5818,11 @@ static HRESULT __cdecl HookedGetActivationFactoryByPCWSTR(void *pClassName,
              "Windows.Xbox.Graphics.Display.DisplayConfiguration!\r\n");
     return g_mockDisplayConfigurationStatics.QueryInterface(iid, factory);
   }
+  if (raw && wcscmp(raw, L"Windows.ApplicationModel.Store.CurrentApp") == 0) {
+    log_line("[vccorlib] -> Intercepted Windows.ApplicationModel.Store.CurrentApp (mock license)\r\n");
+    return g_mockCurrentAppStatics.QueryInterface(iid, factory);
+  }
+
   if (raw && wcscmp(raw, L"Windows.System.Profile.AnalyticsInfo") == 0) {
     log_line("[vccorlib] -> Intercepted Windows.System.Profile.AnalyticsInfo "
              "with typed MockAnalyticsInfoStatics!\r\n");
@@ -5955,9 +5992,9 @@ struct DXGIX_PRESENTARRAY_PARAMETERS {
 
 // ---------------------------------------------------------------------------
 // Game heap arena.
-// The game stores pointers as 32-bit *relative offsets* (e.g. exe+0x17EB0B:
+// The game stores pointers as 32-bit *relative offsets* (e.g. exe+0x18BEBB:
 // `[obj+0x1C] = (int32)(owner - obj)`, undone by `owner = obj + (int32)[obj+0x1C]`
-// in exe+0x1805E9). That only works if all game heap objects live within +-2 GB
+// in exe+0x18D6A9). That only works if all game heap objects live within +-2 GB
 // of each other (true on the Xbox, false with the CRT heap on desktop, where
 // objects end up in unrelated segments -> garbage pointers/AVs). The game's
 // allocators never free (all free slots map to the Alloc stub), so a simple
@@ -6065,8 +6102,8 @@ static void *FallbackAllocMethod(void *pThis, size_t size, void *stackInfo,
   // Each block carries a 16-byte header {MAGIC ^ size, size} so realloc can find its size
   // without a table. The old fixed-size AllocTracker (128K entries, never freed) filled up
   // while loading the tutorial; realloc then returned NULL, the engine's vector grow
-  // (exe+0x7A8D0) kept capacity 0x80 and push_back wrote past the block (crashes at
-  // exe+0x8D4F60 / 0x1913C2 / 0x110111).
+  // (exe+0x7D020) kept capacity 0x80 and push_back wrote past the block (crashes at
+  // exe+0x928020 / 0x19E6CE / 0x117C91).
   uint8_t *raw = (uint8_t *)ArenaAlloc(size + 16);
   void *ptr = nullptr;
   if (raw) {
@@ -6118,7 +6155,7 @@ static void *__fastcall HookedContextAllocatorReallocate(void *pAllocator,
   size_t tracked_old_size = 0;
   bool found = FallbackBlockSize(old_p, &tracked_old_size);
   if (!found) {
-    // Block from another allocator: do what the original (exe+0x7A810) does and copy
+    // Block from another allocator: do what the original (exe+0x7CF60) does and copy
     // new_size bytes, clamped to the readable region. Returning NULL here makes the
     // engine's vector grow silently keep its old capacity -> heap overrun.
     MEMORY_BASIC_INFORMATION mbi = {};
@@ -6187,8 +6224,8 @@ static void *g_RobustAllocatorVtable[32] = {
                                   // alloc)
     (void *)&RootAllocMethod,     // 1 (+0x08) - Root Alloc
     // 2 (+0x10) - Realloc(this, old_p, new_size, flags): used by the engine's vector grow
-    // (exe+0x7A962). It used to be FallbackAllocMethod(this, size=old_p) -> 0-byte blocks and
-    // heap overruns (crash at exe+0x110111 while building the main-menu phase).
+    // (exe+0x7D0B2). It used to be FallbackAllocMethod(this, size=old_p) -> 0-byte blocks and
+    // heap overruns (crash at exe+0x117C91 while building the main-menu phase).
     (void *)&HookedContextAllocatorReallocate,
     (void *)&FallbackSlot<3>, // 3 (+0x18)
     (void *)&FallbackSlot<4>, // 4 (+0x20)
@@ -6261,20 +6298,20 @@ static struct TrackerList {
   size_t count;
 } g_EmptyTrackerList = {nullptr, nullptr, 0};
 
-// Validated allocator globals initialized by game+0x2122D0 (called from
-// OnActivated at game+0x20F7F0):
-// - [game+0x016CB228]: Main flow loHeapAllocator* (0x2E0 bytes, constructed by
-// game+0x066A00(0), written at game+0x212303)
+// Validated allocator globals initialized by game+0x21DC90 (called from
+// OnActivated at game+0x21B500):
+// - [game+0x0167EF58]: Main flow loHeapAllocator* (0x2E0 bytes, constructed by
+// game+0x069F90(0), written at game+0x21DCC3)
 // - [allocator+0xC8] : Sub-pool descriptor table pointer inside the 0x2E0-byte
-// loHeapAllocator (expected: game+0x01592BA0, read at game+0x0670DA)
-// - [game+0x01594428]: Root heap allocator* (constructed by game+0x065CE0
-// inside game+0x0673E0, written at game+0x067426)
-// - [game+0x01594418]: Main/string heap allocator* (0x3A8 bytes, constructed by
-// game+0x065DF0+0x067670 inside game+0x0673E0, written at game+0x0674CD)
-// - [game+0x0159D240]: Thread sub-pool 8 loHeapAllocator* (0x90 bytes,
-// constructed by game+0x065CE0 inside game+0x095CA0, written at game+0x095D5A)
-// - [game+0x015965E8]: Command-line/config registry* (0x30 bytes, constructed
-// by game+0x07A240 inside game+0x07AF70, written at game+0x07AFBA)
+// loHeapAllocator (expected: game+0x015227C0, read at game+0x0670DA)
+// - [game+0x01524490]: Root heap allocator* (constructed by game+0x069300
+// inside game+0x06A960, written at game+0x06A9A6)
+// - [game+0x01524488]: Main/string heap allocator* (0x3A8 bytes, constructed by
+// game+0x069410+0x06AC90 inside game+0x06A960, written at game+0x06AA4C)
+// - [game+0x01537B90]: Thread sub-pool 8 loHeapAllocator* (0x90 bytes,
+// constructed by game+0x069300 inside game+0x098DB0, written at game+0x098E6A)
+// - [game+0x01529128]: Command-line/config registry* (0x30 bytes, constructed
+// by game+0x07C990 inside game+0x07D6C0, written at game+0x07D70A)
 static void LogAllocatorStateSnapshot(const char *phase, HMODULE hExe) {
   if (!hExe) {
     log_line("[bridge][AllocatorSnapshot:%s] hExe is null!\r\n",
@@ -6283,13 +6320,13 @@ static void LogAllocatorStateSnapshot(const char *phase, HMODULE hExe) {
   }
 
   uint8_t *base = reinterpret_cast<uint8_t *>(hExe);
-  void *flowAlloc = *reinterpret_cast<void **>(base + 0x016CB228);
-  void *rootAlloc = *reinterpret_cast<void **>(base + 0x01594428);
-  void *mainAlloc = *reinterpret_cast<void **>(base + 0x01594418);
-  void *threadAlloc = *reinterpret_cast<void **>(base + 0x0159D240);
-  void *cmdRegistry = *reinterpret_cast<void **>(base + 0x015965E8);
+  void *flowAlloc = *reinterpret_cast<void **>(base + 0x0167EF58);
+  void *rootAlloc = *reinterpret_cast<void **>(base + 0x01524490);
+  void *mainAlloc = *reinterpret_cast<void **>(base + 0x01524488);
+  void *threadAlloc = *reinterpret_cast<void **>(base + 0x01537B90);
+  void *cmdRegistry = *reinterpret_cast<void **>(base + 0x01529128);
 
-  log_line("[bridge][AllocatorSnapshot:%s] [game+0x16CB228] (flowAlloc)   = "
+  log_line("[bridge][AllocatorSnapshot:%s] [game+0x167EF58] (flowAlloc)   = "
            "%p%s\r\n",
            phase, flowAlloc,
            (flowAlloc == &g_FallbackAllocator)
@@ -6326,20 +6363,20 @@ static void LogAllocatorStateSnapshot(const char *phase, HMODULE hExe) {
     }
   }
 
-  log_line("[bridge][AllocatorSnapshot:%s] [game+0x1594428] (rootAlloc)   = "
+  log_line("[bridge][AllocatorSnapshot:%s] [game+0x1524490] (rootAlloc)   = "
            "%p%s\r\n",
            phase, rootAlloc,
            (rootAlloc == &g_FallbackRootAllocator)
                ? " (g_FallbackRootAllocator)"
                : "");
-  log_line("[bridge][AllocatorSnapshot:%s] [game+0x1594418] (mainAlloc)   = "
+  log_line("[bridge][AllocatorSnapshot:%s] [game+0x1524488] (mainAlloc)   = "
            "%p%s\r\n",
            phase, mainAlloc,
            (mainAlloc == &g_FallbackAllocator) ? " (g_FallbackAllocator)" : "");
   log_line(
-      "[bridge][AllocatorSnapshot:%s] [game+0x159D240] (threadAlloc) = %p\r\n",
+      "[bridge][AllocatorSnapshot:%s] [game+0x1537B90] (threadAlloc) = %p\r\n",
       phase, threadAlloc);
-  log_line("[bridge][AllocatorSnapshot:%s] [game+0x15965E8] (cmdRegistry) = "
+  log_line("[bridge][AllocatorSnapshot:%s] [game+0x1529128] (cmdRegistry) = "
            "%p%s\r\n",
            phase, cmdRegistry,
            (cmdRegistry == &g_EmptyTrackerList) ? " (g_EmptyTrackerList)" : "");
@@ -6365,8 +6402,8 @@ static bool Install14ByteDetour(void *targetAddr, void *hookFn) {
 }
 
 // Validate the exact game instruction before changing it. The supplied log
-// ends at game_release_xbox.exe+0xB3692, matching the patch site at RVA
-// 0xB367A.
+// ends at game_release_xbox.exe+0xB6C42, matching the patch site at RVA
+// 0xB6C2A.
 static bool g_bufferPointerPatchReady = false;
 
 static bool PatchVerifiedR8ToRcx(HMODULE hExe, uintptr_t rva,
@@ -6429,7 +6466,7 @@ static void DetourPlayGoInit(void *pPlayGo) {
     *(uint32_t *)((char *)pPlayGo + 0x0C) = 1; // m_state = 1
     *(uint8_t *)((char *)pPlayGo + 0x10) = 0;  // m_pending = 0
   }
-  // NOTE: [exe+0x159DF90] is NOT a PlayGo chunk bitmap: it is the loPlatformEvent flag set
+  // NOTE: [exe+0x1538940] is NOT a PlayGo chunk bitmap: it is the loPlatformEvent flag set
   // (bit 0 = eSessionInviteAccepted, bit 2 = eResumedFromSuspend, ...). Filling it with 1s
   // faked a multiplayer invite, which made IntroVideoPhase skip the intro video at once.
 }
@@ -6508,20 +6545,20 @@ static bool STDMETHODCALLTYPE DetourPlatformInputCheckButton(void *pThis) {
   }
 
   // Old forced pacing only (ONRUSH_FORCE_PHASE=1). In the natural flow these writes broke race loading:
-  // [0x16CABA0]=1 marked a still-loading phase ready (crash exe+0x17D532, null object), and 0x16CAB9F is
-  // not a flag but the top byte of the pointer at exe+0x16CAB98 (crash exe+0x20FCE2 reading 0x0100xxxx...).
+  // [0x167E8C8]=1 marked a still-loading phase ready (crash exe+0x17D532, null object), and 0x167E8C7 is
+  // not a flag but the top byte of the pointer at exe+0x167E8C0 (crash exe+0x21B9E2 reading 0x0100xxxx...).
   static const bool s_forceFlags = InputEnvFlag("ONRUSH_FORCE_PHASE");
   if (pressed && s_forceFlags) {
     if (hExe) {
-      void *nextPhase = *(void **)((uint8_t *)hExe + 0x016CAC18);
+      void *nextPhase = *(void **)((uint8_t *)hExe + 0x0167E940);
       if (nextPhase != nullptr) {
-        uint8_t *pTransitionFlag0 = (uint8_t *)hExe + 0x016CAC20;
-        uint8_t *pTransitionFlag1 = (uint8_t *)hExe + 0x016CAC21;
-        uint8_t *pPhaseReady1     = (uint8_t *)hExe + 0x016CABA0;
+        uint8_t *pTransitionFlag0 = (uint8_t *)hExe + 0x0167E948;
+        uint8_t *pTransitionFlag1 = (uint8_t *)hExe + 0x0167E949;
+        uint8_t *pPhaseReady1     = (uint8_t *)hExe + 0x0167E8C8;
         *pTransitionFlag0 = 1;
         *pTransitionFlag1 = 1;
         *pPhaseReady1 = 1;
-        log_line("[input] DetourPlatformInputCheckButton: Set [0x016CAC20]=1, [0x016CAC21]=1 and [0x016CABA0]=1 (nextPhase=%p)\r\n", nextPhase);
+        log_line("[input] DetourPlatformInputCheckButton: Set [0x0167E948]=1, [0x0167E949]=1 and [0x0167E8C8]=1 (nextPhase=%p)\r\n", nextPhase);
       }
     }
     return true;
@@ -6534,7 +6571,7 @@ static bool STDMETHODCALLTYPE DetourStartScreenCheckInput(void *pPhase) {
   HMODULE hExe = GetModuleHandleW(nullptr);
   void *pPlatformInput = nullptr;
   if (hExe) {
-    pPlatformInput = *(void **)((uint8_t *)hExe + 0x015A5660);
+    pPlatformInput = *(void **)((uint8_t *)hExe + 0x01543480);
   }
   static volatile LONG s_startCheckCount = 0;
   if (InterlockedIncrement(&s_startCheckCount) <= 20) {
@@ -6544,7 +6581,7 @@ static bool STDMETHODCALLTYPE DetourStartScreenCheckInput(void *pPhase) {
 }
 
 // ============================================================================
-// Page Element Cleanup Null Guard Trampoline (RVA 0x001D8920)
+// Page Element Cleanup Null Guard Trampoline (RVA 0x001E3830)
 // ============================================================================
 typedef void (*PFN_PageElementCleanup)(void *rcx);
 static PFN_PageElementCleanup g_TruePageElementCleanup = nullptr;
@@ -6567,13 +6604,22 @@ static void DetourStartVideo(void *pPlayer, const char *filename) {
            filename ? filename : "<null>");
   if (!pPlayer || !filename)
     return;
+  // Like the original (exe+0x23FBF6): only start when the player is idle (state 0).
+  // The 1.80 intro calls StartVideo twice on the same player; reopening Bink over
+  // the live handle crashed at exe+0x6B31D.
+  int32_t *state = (int32_t *)((uint8_t *)pPlayer + 0x178);
+  if (*state != 0) {
+    log_line("[video] StartVideo ignored: player busy (state=%d)\r\n", *state);
+    return;
+  }
+  *state = 1;
 
-  // 1. Build the path like the original (exe+0x22B100): snprintf(player+0xF0, 0x7F, "%s%s",
-  //    [exe+0x13C3B88] ("art:videos/"), filename). Without the prefix the game's Bink file
+  // 1. Build the path like the original (exe+0x23FBF0): snprintf(player+0xF0, 0x7F, "%s%s",
+  //    [exe+0x1418778] ("art:videos/"), filename). Without the prefix the game's Bink file
   //    callbacks cannot find the .bk2 in the dat archives and BinkOpen returns NULL.
   char *dest = (char *)pPlayer + 0xf0;
   {
-    const char *prefix = *(const char **)((uint8_t *)hExe + 0x013C3B88);
+    const char *prefix = *(const char **)((uint8_t *)hExe + 0x01418778);
     if (prefix && (uintptr_t)prefix > 0x10000) {
       _snprintf_s(dest, 0x7f, _TRUNCATE, "%s%s", prefix, filename);
     } else {
@@ -6584,10 +6630,13 @@ static void DetourStartVideo(void *pPlayer, const char *filename) {
   // 2. Execute 0x14022B180 (VideoOpenWorker) synchronously
   typedef void (*PFN_VideoOpenWorker)(void *pPlayer);
   PFN_VideoOpenWorker openWorker =
-      (PFN_VideoOpenWorker)((uint8_t *)hExe + 0x0022B180);
-  log_line("[video] Running VideoOpenWorker (0x0022B180) synchronously for '%s'...\r\n",
+      (PFN_VideoOpenWorker)((uint8_t *)hExe + 0x0023FC80);
+  log_line("[video] Running VideoOpenWorker (0x0023FC80) synchronously for '%s'...\r\n",
            dest);
   openWorker(pPlayer);
+  // 3. The job's completion (exe+0x23FCC0): state 2 + playback setup if Bink opened, else state 0.
+  typedef void (*PFN_VideoOpenDone)(void *pPlayer);
+  ((PFN_VideoOpenDone)((uint8_t *)hExe + 0x0023FCC0))(pPlayer);
   log_line("[video] VideoOpenWorker finished: state=%d, hBink=%p\r\n",
            *(int32_t *)((uint8_t *)pPlayer + 0x178),
            *(void **)((uint8_t *)pPlayer + 0x170));
@@ -6625,19 +6674,19 @@ static inline bool PlausiblePtr(const void *p) {
 
 static bool MaterializePendingPhase(HMODULE hExe, bool force = false) {
   if (!hExe) return false;
-  void ***ppTargetNextPhase = (void ***)((uint8_t *)hExe + 0x016CAB90);
+  void ***ppTargetNextPhase = (void ***)((uint8_t *)hExe + 0x0167E8B8);
   if (!ppTargetNextPhase) return false;
   void **pTargetNextPhase = *ppTargetNextPhase;
   if (!pTargetNextPhase) return false;
 
   // If already materialized (nextPhase non-null), nothing pending
   // (the job-side worker passes force=true: the slot still holds the current phase after a
-  //  transition, and the original worker exe+0x20FCB0 always overwrites it)
+  //  transition, and the original worker exe+0x21B9B0 always overwrites it)
   if (*pTargetNextPhase != nullptr &&
-      !(force && *pTargetNextPhase == *(void **)((uint8_t *)hExe + 0x016CAC08))) return false;
+      !(force && *pTargetNextPhase == *(void **)((uint8_t *)hExe + 0x0167E930))) return false;
 
-  void *configDescObj = *(void **)((uint8_t *)hExe + 0x016CAB88);
-  void *phaseAllocObj = *(void **)((uint8_t *)hExe + 0x016CAB98);
+  void *configDescObj = *(void **)((uint8_t *)hExe + 0x0167E8B0);
+  void *phaseAllocObj = *(void **)((uint8_t *)hExe + 0x0167E8C0);
   // The game parks these globals at -1 (not just NULL) while a phase is being torn down.
   if (!PlausiblePtr(configDescObj) || !PlausiblePtr(phaseAllocObj)) return false;
 
@@ -6656,7 +6705,7 @@ static bool MaterializePendingPhase(HMODULE hExe, bool force = false) {
   }
 
   // OnEnter may tear down / replace the allocator object; re-read and re-validate it.
-  phaseAllocObj = *(void *volatile *)((uint8_t *)hExe + 0x016CAB98);
+  phaseAllocObj = *(void *volatile *)((uint8_t *)hExe + 0x0167E8C0);
   if (!PlausiblePtr(phaseAllocObj)) return true;
   {
     // A live allocator object has its vtable inside the exe image; a recycled one
@@ -6678,17 +6727,17 @@ static bool MaterializePendingPhase(HMODULE hExe, bool force = false) {
 static void DetourPhaseWorker() {
   HMODULE hExe = GetModuleHandleW(nullptr);
   if (!MaterializePendingPhase(hExe, InputEnvFlag("ONRUSH_FORCE_WORKER")) && hExe) {
-    void **pp = *(void ***)((uint8_t *)hExe + 0x016CAB90);
+    void **pp = *(void ***)((uint8_t *)hExe + 0x0167E8B8);
     log_line("[phase] DetourPhaseWorker: materialize skipped (target=%p *target=%p config=%p alloc=%p)\r\n",
-             (void *)pp, pp ? *pp : nullptr, *(void **)((uint8_t *)hExe + 0x016CAB88),
-             *(void **)((uint8_t *)hExe + 0x016CAB98));
+             (void *)pp, pp ? *pp : nullptr, *(void **)((uint8_t *)hExe + 0x0167E8B0),
+             *(void **)((uint8_t *)hExe + 0x0167E8C0));
   }
-  // The original worker (exe+0x20FCB0) ends with a tail call to exe+0x15C850; keep it
+  // The original worker (exe+0x21B9B0) ends with a tail call to exe+0x16A670; keep it
   // (ONRUSH_NO_PHASE_TAIL=1 skips it, the old behaviour).
   static const bool s_noTail = InputEnvFlag("ONRUSH_NO_PHASE_TAIL");
   if (!s_noTail && hExe) {
-    log_line("[phase] DetourPhaseWorker: calling original tail exe+0x15C850\r\n");
-    ((void (*)())((uint8_t *)hExe + 0x0015C850))();
+    log_line("[phase] DetourPhaseWorker: calling original tail exe+0x16A670\r\n");
+    ((void (*)())((uint8_t *)hExe + 0x0016A670))();
   }
 }
 
@@ -6696,54 +6745,54 @@ static void PatchPresentationHooks(HMODULE hExe) {
   if (!hExe)
     return;
 
-  // 0. Patch RVA 0x0020FCB0 (Phase Constructor Worker): FF 25 00 00 00 00 [DetourPhaseWorker]
+  // 0. Patch RVA 0x0021B9B0 (Phase Constructor Worker): FF 25 00 00 00 00 [DetourPhaseWorker]
   {
-    uint8_t *pWorker = (uint8_t *)hExe + 0x0020FCB0;
+    uint8_t *pWorker = (uint8_t *)hExe + 0x0021B9B0;
     DWORD oldProtWorker = 0;
     // ONRUSH_ORIG_PHASE_WORKER=1: keep the game's own phase worker (and do not build phases
     // from Present); meant to be used with ONRUSH_REAL_JOBBUSY=1.
     if (InputEnvFlag("ONRUSH_ORIG_PHASE_WORKER")) {
-      log_line("[d3d12_x] ONRUSH_ORIG_PHASE_WORKER: keeping original 0x0020FCB0\r\n");
+      log_line("[d3d12_x] ONRUSH_ORIG_PHASE_WORKER: keeping original 0x0021B9B0\r\n");
     } else if (VirtualProtect(pWorker, 14, PAGE_EXECUTE_READWRITE, &oldProtWorker)) {
       pWorker[0] = 0xFF;
       pWorker[1] = 0x25;
       *(uint32_t *)(pWorker + 2) = 0;
       *(uint64_t *)(pWorker + 6) = (uint64_t)&DetourPhaseWorker;
       VirtualProtect(pWorker, 14, oldProtWorker, &oldProtWorker);
-      log_line("[d3d12_x] Patched 0x0020FCB0 with DetourPhaseWorker -> %p\r\n", &DetourPhaseWorker);
+      log_line("[d3d12_x] Patched 0x0021B9B0 with DetourPhaseWorker -> %p\r\n", &DetourPhaseWorker);
     }
   }
 
-  // 0a. Patch RVA 0x00311CA0 (MusicAudioUpdate): ret (C3). Only with ONRUSH_NO_AUDIO=1 (audio is on by default since 2026-11-08).
+  // 0a. Patch RVA 0x00339FD0 (MusicAudioUpdate): ret (C3). Only with ONRUSH_NO_AUDIO=1 (audio is on by default since 2026-11-08).
   if (GetEnvironmentVariableA("ONRUSH_NO_AUDIO", nullptr, 0) != 0) {
-    uint8_t *pMusicUpdate = (uint8_t *)hExe + 0x00311CA0;
+    uint8_t *pMusicUpdate = (uint8_t *)hExe + 0x00339FD0;
     DWORD oldProtMusic = 0;
     if (VirtualProtect(pMusicUpdate, 1, PAGE_EXECUTE_READWRITE, &oldProtMusic)) {
       *pMusicUpdate = 0xC3;
       VirtualProtect(pMusicUpdate, 1, oldProtMusic, &oldProtMusic);
-      log_line("[d3d12_x] Patched 0x00311CA0 (MusicAudioUpdate) with ret (0xC3)\r\n");
+      log_line("[d3d12_x] Patched 0x00339FD0 (MusicAudioUpdate) with ret (0xC3)\r\n");
     }
   }
 
-  // 0b. Patch RVA 0x00211705: 0F 85 ED 00 00 00 (jne exit on JobQueue pending) -> 90 90 90 90 90 90
+  // 0b. Patch RVA 0x0021D215: 0F 85 ED 00 00 00 (jne exit on JobQueue pending) -> 90 90 90 90 90 90
   {
-    uint8_t *pJobQueueWait = (uint8_t *)hExe + 0x00211705;
+    uint8_t *pJobQueueWait = (uint8_t *)hExe + 0x0021D215;
     DWORD oldProtJobWait = 0;
     if (VirtualProtect(pJobQueueWait, 6, PAGE_EXECUTE_READWRITE, &oldProtJobWait)) {
       if (pJobQueueWait[0] == 0x0F && pJobQueueWait[1] == 0x85) {
         memset(pJobQueueWait, 0x90, 6);
         VirtualProtect(pJobQueueWait, 6, oldProtJobWait, &oldProtJobWait);
-        log_line("[d3d12_x] Patched 0x00211705 (PhaseTransition JobQueue wait) with NOPs\r\n");
+        log_line("[d3d12_x] Patched 0x0021D215 (PhaseTransition JobQueue wait) with NOPs\r\n");
       } else {
         VirtualProtect(pJobQueueWait, 6, oldProtJobWait, &oldProtJobWait);
       }
     }
   }
 
-  // 1. Patch RVA 0x000AF371: FF 90 80 00 00 00 (call qword ptr [rax+80h]) -> FF 15 [disp32]
+  // 1. Patch RVA 0x000B2EE1: FF 90 80 00 00 00 (call qword ptr [rax+80h]) -> FF 15 [disp32]
   // This redirects CreateSwapChainForCoreWindow directly to HookedCreateSwapChainForCoreWindow,
   // ensuring the flip-model desktop swapchain is properly initialized and captured into g_pMainSwapChain.
-  uint8_t *pCallSite = (uint8_t *)hExe + 0x000AF371;
+  uint8_t *pCallSite = (uint8_t *)hExe + 0x000B2EE1;
   DWORD oldProt = 0;
   if (VirtualProtect(pCallSite, 6, PAGE_EXECUTE_READWRITE, &oldProt)) {
     if (pCallSite[0] == 0xFF && pCallSite[1] == 0x90 && pCallSite[2] == 0x80) {
@@ -6757,7 +6806,7 @@ static void PatchPresentationHooks(HMODULE hExe) {
           pCallSite[1] = 0x15;
           memcpy(pCallSite + 2, &disp, 4);
           FlushInstructionCache(GetCurrentProcess(), pCallSite, 6);
-          log_line("[d3d12_x] Patched 0x000AF371: CreateSwapChainForCoreWindow -> "
+          log_line("[d3d12_x] Patched 0x000B2EE1: CreateSwapChainForCoreWindow -> "
                    "HookedCreateSwapChainForCoreWindow (disp=0x%X, slot=%p)\r\n",
                    disp, pSlot);
         } else {
@@ -6765,23 +6814,23 @@ static void PatchPresentationHooks(HMODULE hExe) {
                    diff);
         }
       } else {
-        log_line("[d3d12_x] ERROR: Failed to allocate near slot for 0x000AF371 hook!\r\n");
+        log_line("[d3d12_x] ERROR: Failed to allocate near slot for 0x000B2EE1 hook!\r\n");
       }
     } else {
-      log_line("[d3d12_x] WARNING: 0x000AF371 unexpected bytes (%02X %02X %02X)\r\n",
+      log_line("[d3d12_x] WARNING: 0x000B2EE1 unexpected bytes (%02X %02X %02X)\r\n",
                pCallSite[0], pCallSite[1], pCallSite[2]);
     }
     VirtualProtect(pCallSite, 6, oldProt, &oldProt);
   }
 
-  // Note: RVA 0x000BAD00 is not a presentation function, but an internal descriptor
+  // Note: RVA 0x000BEA30 is not a presentation function, but an internal descriptor
   // cache allocator for RTVs/DSVs (CreateDepthStencilView at [vtable+0xA8] / CreateRenderTargetView at [vtable+0xA0]).
-  // The early exit check at 0x000BAD0D (test byte ptr [rcx+2Ch], 42h; jz 0xBAE84) must be preserved
-  // to avoid underflowing the descriptor free-list (0x666b0) on resources without RTV/DSV flags.
+  // The early exit check at 0x000BEA44 (test byte ptr [rcx+2Ch], 42h; jz 0xBAE84) must be preserved
+  // to avoid underflowing the descriptor free-list (0x69cf0) on resources without RTV/DSV flags.
 }
 
-// The audio backend init (exe+0xA3C580) submits a command to the Xbox ACP and
-// then spins in `do { pump(0xA3CA40) } while (this->pending [+0xB4] > 0)` until
+// The audio backend init (exe+0xA93230) submits a command to the Xbox ACP and
+// then spins in `do { pump(0xA936F0) } while (this->pending [+0xB4] > 0)` until
 // the ACP firmware acknowledges it. The port does not emulate the ACP, so the
 // ctor of PersistentPhase (which also creates the UI selectors and starts the
 // game's input polling) never returned. Make the loop run its pump once.
@@ -6792,12 +6841,12 @@ static void PatchAcpWait(HMODULE hExe) {
     log_line("[acp] ACP ack wait left as-is (ONRUSH_ACP_WAIT=1)\r\n");
     return;
   }
-  uint8_t *p = (uint8_t *)hExe + 0x00A3CA0F;  // ja 0xA3CA00
-  static const uint8_t expected[2] = {0x77, 0xEF};  // ja short 0xA3CA00
+  uint8_t *p = (uint8_t *)hExe + 0x00A936BF;  // ja 0xA936B0
+  static const uint8_t expected[2] = {0x77, 0xEF};  // ja short 0xA936B0
   static const uint8_t nop2[2] = {0x90, 0x90};
   DWORD old = 0;
   if (memcmp(p, expected, 2) != 0) {
-    log_line("[acp] WARNING: unexpected bytes at exe+0xA3CA0F (%02X %02X %02X %02X %02X %02X); not patched\r\n",
+    log_line("[acp] WARNING: unexpected bytes at exe+0xA936BF (%02X %02X %02X %02X %02X %02X); not patched\r\n",
              p[0], p[1], p[2], p[3], p[4], p[5]);
     return;
   }
@@ -6805,7 +6854,7 @@ static void PatchAcpWait(HMODULE hExe) {
     memcpy(p, nop2, 2);
     FlushInstructionCache(GetCurrentProcess(), p, 2);
     VirtualProtect(p, 2, old, &old);
-    log_line("[acp] Patched exe+0xA3CA0F: ACP ack wait loop disabled\r\n");
+    log_line("[acp] Patched exe+0xA936BF: ACP ack wait loop disabled\r\n");
   }
 }
 
@@ -6814,25 +6863,25 @@ static void PatchAcpWait(HMODULE hExe) {
 // desktop Windows only accepts DEVICE_STATEMASK_ALL (0xF) and returns E_INVALIDARG,
 // so the sink never found a device and the game ran silent. Use 0xF.
 static void PatchWwiseDeviceStateMask(HMODULE hExe) {
-  uint8_t *p = (uint8_t *)hExe + 0x00A4D0FB;  // lea r8d, [rdx+0x1F]
+  uint8_t *p = (uint8_t *)hExe + 0x00AA505D;  // lea r8d, [rdx+0x1F]
   static const uint8_t expected[4] = {0x44, 0x8D, 0x42, 0x1F};
   DWORD old = 0;
   if (memcmp(p, expected, 4) != 0) {
-    log_line("[audio] WARNING: unexpected bytes at exe+0xA4D0FB; device state mask not patched\r\n");
+    log_line("[audio] WARNING: unexpected bytes at exe+0xAA505D; device state mask not patched\r\n");
     return;
   }
   if (VirtualProtect(p, 4, PAGE_EXECUTE_READWRITE, &old)) {
     p[3] = 0x0F;
     FlushInstructionCache(GetCurrentProcess(), p, 4);
     VirtualProtect(p, 4, old, &old);
-    log_line("[audio] Patched exe+0xA4D0FB: EnumAudioEndpoints state mask 0x1F -> 0xF\r\n");
+    log_line("[audio] Patched exe+0xAA505D: EnumAudioEndpoints state mask 0x1F -> 0xF\r\n");
   }
-  // The sink init (exe+0xA51F00) calls two Xbox-only IAudioClient2 slots. On desktop
+  // The sink init (exe+0xAA9FD0) calls two Xbox-only IAudioClient2 slots. On desktop
   // slot 0x98 is IAudioClient3::GetCurrentSharedModeEnginePeriod, which writes a
   // pointer over the sink's own callback vtable (the Xbox call registers that
   // callback), and slot 0x88 is GetBufferSizeLimits. That crashed the audio thread
   // when the second (music) output started. Drop both calls; the results are unused.
-  static const uint32_t calls[2] = {0x00A52045, 0x00A5206C};
+  static const uint32_t calls[2] = {0x00AAA11D, 0x00AAA147};
   static const uint8_t slots[2] = {0x98, 0x88};
   for (int i = 0; i < 2; ++i) {
     uint8_t *c = (uint8_t *)hExe + calls[i];
@@ -6848,10 +6897,35 @@ static void PatchWwiseDeviceStateMask(HMODULE hExe) {
       VirtualProtect(c, 6, old, &old);
     }
   }
-  log_line("[audio] Patched Xbox-only IAudioClient2 calls at exe+0xA52045/0xA5206C\r\n");
+  log_line("[audio] Patched Xbox-only IAudioClient2 calls at exe+0xAAA11D/0xAAA147\r\n");
 }
 
-// Wwise WASAPI sink init (exe+0xA51F00): this = sink, rdx = IMMDevice, r8 = output
+// Launcher "Desbloquear cosméticos" (-unlockcosmetics or ONRUSH_UNLOCK_COSMETICS=1): like the game's
+// own -unlockall, but only for the item checks: exe+0x3D7180 (outfits, tombstones, tricks, victory
+// animations, vehicles) and exe+0x3D7360 (crashtags). Career events and class videos stay as saved.
+// Each check starts with `if (HasOption("unlockall")) return true;` -> drop the je after it.
+static void PatchUnlockCosmetics(HMODULE hExe) {
+  const wchar_t *cl = GetCommandLineW();
+  bool on = InputEnvFlag("ONRUSH_UNLOCK_COSMETICS") || (cl && wcsstr(cl, L"-unlockcosmetics"));
+  if (!on) return;
+  static const struct { uint32_t rva; uint8_t jeLen; } sites[2] = {{0x003D719F, 0x0E}, {0x003D7381, 0x0C}};
+  for (const auto &s : sites) {
+    uint8_t *p = (uint8_t *)hExe + s.rva;
+    DWORD old = 0;
+    if (p[-2] != 0x84 || p[-1] != 0xC0 || p[0] != 0x74 || p[1] != s.jeLen) {  // test al,al ; je
+      log_line("[unlock] WARNING: unexpected bytes at exe+0x%X; not patched\r\n", s.rva);
+      continue;
+    }
+    if (VirtualProtect(p, 2, PAGE_EXECUTE_READWRITE, &old)) {
+      p[0] = 0x90; p[1] = 0x90;
+      FlushInstructionCache(GetCurrentProcess(), p, 2);
+      VirtualProtect(p, 2, old, &old);
+      log_line("[unlock] cosmetics: item check at exe+0x%X always unlocked\r\n", s.rva);
+    }
+  }
+}
+
+// Wwise WASAPI sink init (exe+0xAA9FD0): this = sink, rdx = IMMDevice, r8 = output
 // settings (+0x14 = output type; 2 = main, 3 = background music). The sink keeps its
 // IAudioClient at +0x40. When the player's own playlist replaces the game music, the
 // music output stream is silenced here (the effects/voice output is untouched).
@@ -6914,17 +6988,17 @@ static int DetourWwiseSinkInit(void *sink, void *device, void *settings) {
   return r;
 }
 
-// Game audio layer SetRTPC(id, value) at exe+0x1E9E40: forwards to the audio system
-// object [exe+0x16C2230] vtable slot 0xE0. The option sliders go through it, among them
+// Game audio layer SetRTPC(id, value) at exe+0x1F55B0: forwards to the audio system
+// object [exe+0x1675920] vtable slot 0xE0. The option sliders go through it, among them
 // "Music_Volume" (Wwise id = FNV-1 of the lower-case name). With the player's own
 // playlist the game music is held at 0 while effects/voices keep their volume.
 static HMODULE g_rtpcExe = nullptr;
 static volatile bool g_forceGameMusicOff = false;
 static volatile LONG g_rtpcLogged = 0;
 static volatile uint32_t kRtpcMusicVolume = 0xFFFFFFFFu;  // game handle, learnt from the name lookup
-// exe+0x1E8920 (gameObj, name) -> handle: audio system vtable slot 0x58.
+// exe+0x1F3D40 (gameObj, name) -> handle: audio system vtable slot 0x58.
 static uint32_t DetourRtpcLookup(int gameObj, const char *name) {
-  void *sys = *(void **)((uint8_t *)g_rtpcExe + 0x016C2230);
+  void *sys = *(void **)((uint8_t *)g_rtpcExe + 0x01675920);
   typedef uint32_t (*PFN)(void *, int, const char *);
   uint32_t h = ((PFN)(*(void ***)sys)[0x58 / 8])(sys, gameObj, name);
   if (name && _stricmp(name, "Music_Volume") == 0) { kRtpcMusicVolume = h; log_line("[audio] Music_Volume rtpc handle=%X\r\n", h); }
@@ -6941,13 +7015,13 @@ static void DetourSetRtpc(uint32_t id, float value) {
     for (char *t = strtok_s(zl, ",", &ctx); t; t = strtok_s(nullptr, ",", &ctx))
       if (strtoul(t, nullptr, 16) == id) value = 0.0f;
   }
-  void *sys = *(void **)((uint8_t *)g_rtpcExe + 0x016C2230);
+  void *sys = *(void **)((uint8_t *)g_rtpcExe + 0x01675920);
   typedef void (*PFN)(void *, uint32_t, float);
   ((PFN)(*(void ***)sys)[0xE0 / 8])(sys, id, value);
 }
 static void HookSetRtpc(HMODULE hExe) {
-  uint8_t *p = (uint8_t *)hExe + 0x001E9E40;
-  static const uint8_t expected[9] = {0x8B, 0xD1, 0x48, 0x8B, 0x0D, 0xE7, 0x83, 0x4D, 0x01};
+  uint8_t *p = (uint8_t *)hExe + 0x001F55B0;
+  static const uint8_t expected[9] = {0x8B, 0xD1, 0x48, 0x8B, 0x0D, 0x67, 0x03, 0x48, 0x01};  // 1.80: rcx = [exe+0x1675920]
   if (memcmp(p, expected, 9) != 0) { log_line("[audio] WARNING: unexpected SetRtpc bytes; not hooked\r\n"); return; }
   g_rtpcExe = hExe;
   DWORD old = 0;
@@ -6955,7 +7029,7 @@ static void HookSetRtpc(HMODULE hExe) {
   p[0] = 0xFF; p[1] = 0x25; *(uint32_t *)(p + 2) = 0; *(uint64_t *)(p + 6) = (uint64_t)&DetourSetRtpc;
   VirtualProtect(p, 14, old, &old);
   FlushInstructionCache(GetCurrentProcess(), p, 14);
-  uint8_t *q = (uint8_t *)hExe + 0x001E8920;
+  uint8_t *q = (uint8_t *)hExe + 0x001F3D40;
   static const uint8_t expectedLookup[9] = {0x44, 0x8B, 0xC9, 0x4C, 0x8B, 0xC2, 0x48, 0x8B, 0x0D};
   if (memcmp(q, expectedLookup, 9) == 0 && VirtualProtect(q, 14, PAGE_EXECUTE_READWRITE, &old)) {
     q[0] = 0xFF; q[1] = 0x25; *(uint32_t *)(q + 2) = 0; *(uint64_t *)(q + 6) = (uint64_t)&DetourRtpcLookup;
@@ -6967,7 +7041,7 @@ static void HookSetRtpc(HMODULE hExe) {
   log_line("[audio] Hooked SetRtpc (game music forced off: %d)\r\n", g_forceGameMusicOff ? 1 : 0);
 }
 
-// Team identity setup (exe+0x2D68B0(this, session)): session+0x74 is the match type; types 0 and 4 use the
+// Team identity setup (exe+0x2FBE10(this, session)): session+0x74 is the match type; types 0 and 4 use the
 // default Blue/Orange teams, others look up the team ids stored at session+0xCD / +0x10D (Vs_Team_Logos table).
 typedef void (*PFN_TeamSetup)(void *self, void *session);
 static PFN_TeamSetup g_TrueTeamSetup = nullptr;
@@ -6975,7 +7049,7 @@ static uint8_t g_TeamSetupTramp[64] = {};
 // Career events name their teams with grid-lineup codes ('BHMKTLD', 'OAYGSNO'...) whose table entries carry the
 // generic ID_TEAM_BLUE / ID_TEAM_ORANGE logos. The retail game showed the character crews instead (local team =
 // PLAYER_TEAM_<player character>, rival = another crew, e.g. Alpha Mile vs Gaijin Trap). Do that here with the
-// game's own team table: exe+0x2B8F60(charId) = crew of a character, 0x2B8530() = crew count, 0x2B8ED0(n) = n-th crew.
+// game's own team table: exe+0x2DB1B0(charId) = crew of a character, 0x2DA530() = crew count, 0x2DB120(n) = n-th crew.
 static bool IsLineupCode(const char *t) {
   if (!t || (t[0] != 'B' && t[0] != 'O')) return false;
   int n = 0; while (t[n] >= 'A' && t[n] <= 'Z') ++n;
@@ -6989,10 +7063,10 @@ static void NameCareerTeams(uint8_t *session) {
     char *teamA = (char *)session + 0xCD, *teamB = (char *)session + 0x10D;
     int type = *(const int *)(session + 0x74);
     if (type == 0 || type == 4 || !IsLineupCode(teamA) || !IsLineupCode(teamB)) return;
-    const uint8_t *profile = *(const uint8_t *const *)(exe + 0x178C6F8);
+    const uint8_t *profile = *(const uint8_t *const *)(exe + 0x1829E60);
     int charId = profile ? *(const int *)(profile + 0x38) : 0;
-    const uint8_t *mine = ((PFN_EntryByIdx)(exe + 0x2B8F60))(charId);
-    int n = ((PFN_Count)(exe + 0x2B8530))();
+    const uint8_t *mine = ((PFN_EntryByIdx)(exe + 0x2DB1B0))(charId);
+    int n = ((PFN_Count)(exe + 0x2DA530))();
     if (!mine || n < 2) return;
     // one rival per match: keep the pick while the session's lineup codes stay the same
     static char s_key[20] = {}; static int s_pick = -1;
@@ -7003,7 +7077,7 @@ static void NameCareerTeams(uint8_t *session) {
     }
     const uint8_t *rival = nullptr;
     for (int k = 0; k < n && !rival; ++k) {
-      const uint8_t *e = ((PFN_EntryByIdx)(exe + 0x2B8ED0))((s_pick + k) % n);
+      const uint8_t *e = ((PFN_EntryByIdx)(exe + 0x2DB120))((s_pick + k) % n);
       if (e && e != mine) rival = e;
     }
     if (!rival) return;
@@ -7022,9 +7096,9 @@ static void DetourTeamSetup(void *self, void *session) {
     __try { memcpy(a, s + 0xCD, 64); memcpy(b, s + 0x10D, 64); } __except (EXCEPTION_EXECUTE_HANDLER) {}
     log_line("[team] setup session=%p type=%d teamA='%s' teamB='%s'\r\n", session, *(const int *)(s + 0x74), a, b);
     static bool s_dumped = false;
-    if (!s_dumped) {  // team table at exe+0x1721810: 50 entries of 0xC8, id string at +0x48, logo at +0x88
+    if (!s_dumped) {  // team table at exe+0x17B9B20: 50 entries of 0xC8, id string at +0x48, logo at +0x88
       s_dumped = true;
-      const uint8_t *t = (const uint8_t *)GetModuleHandleA(nullptr) + 0x1721810;
+      const uint8_t *t = (const uint8_t *)GetModuleHandleA(nullptr) + 0x17B9B20;
       for (int i = 0; i < 50; ++i) {
         char id[33] = {}, lg[49] = {};
         __try { memcpy(id, t + i * 0xC8 + 0x48, 32); memcpy(lg, t + i * 0xC8 + 0x88, 48); } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -7037,7 +7111,7 @@ static void DetourTeamSetup(void *self, void *session) {
 }
 static void HookTeamSetup(HMODULE hExe) {
   // prologue: mov [rsp+18],rbx; push rdi; sub rsp,0x80; mov rax,[rdx]  (16 bytes, no rip-relative)
-  uint8_t *p = (uint8_t *)hExe + 0x002D68B0;
+  uint8_t *p = (uint8_t *)hExe + 0x002FBE10;  // 1.80: new prologue (mov rax,rsp; sub rsp,0x88), port pending
   static const uint8_t expected[16] = {0x48, 0x89, 0x5C, 0x24, 0x18, 0x57, 0x48, 0x81, 0xEC, 0x80, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x02};
   if (memcmp(p, expected, 16) != 0) { log_line("[team] unexpected prologue; not hooked\r\n"); return; }
   DWORD old = 0;
@@ -7057,7 +7131,7 @@ static void HookTeamSetup(HMODULE hExe) {
 
 static void HookWwiseSinkInit(HMODULE hExe) {
   // prologue: push rbp/rsi/rdi/r15; lea rbp,[rsp-0x3F]; sub rsp,0xA8  (18 bytes, no rip-relative)
-  uint8_t *p = (uint8_t *)hExe + 0x00A51F00;
+  uint8_t *p = (uint8_t *)hExe + 0x00AA9FD0;
   static const uint8_t expected[18] = {0x40, 0x55, 0x56, 0x57, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xC1,
                                        0x48, 0x81, 0xEC, 0xA8, 0x00, 0x00, 0x00};
   if (memcmp(p, expected, 18) != 0) { log_line("[audio] WARNING: unexpected sink init prologue; not hooked\r\n"); return; }
@@ -7078,7 +7152,7 @@ static void HookWwiseSinkInit(HMODULE hExe) {
 }
 
 // On Durango GPU virtual addresses are CPU-visible, and the resource init code
-// at exe+0xBA3A5..0xBA3B1 does `memset(res->GetGPUVirtualAddress(), 0, size)`.
+// at exe+0xBE0C5..0xBE0D1 does `memset(res->GetGPUVirtualAddress(), 0, size)`.
 // On desktop D3D12 that address is not CPU-mapped, so the memset faults
 // (AV in VCRUNTIME140). Route that single call through a fault-tolerant memset.
 static volatile LONG s_gpuVaMemsetSkips = 0;
@@ -7105,11 +7179,11 @@ static void *__cdecl SafeMemsetGpuVa(void *dst, int val, size_t n) {
 }
 
 static void PatchGpuVaMemset(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0x000BA3B1;  // call memset (0xCC93E2)
-  uint8_t *memsetFn = (uint8_t *)hExe + 0x00CC93E2;
+  uint8_t *site = (uint8_t *)hExe + 0x000BE0D1;  // call memset (0xD21EB2)
+  uint8_t *memsetFn = (uint8_t *)hExe + 0x00D21EB2;
   if (site[0] != 0xE8 ||
       site + 5 + *(int32_t *)(site + 1) != memsetFn) {
-    log_line("[gpuva] WARNING: exe+0xBA3B1 is not `call memset`; not patched\r\n");
+    log_line("[gpuva] WARNING: exe+0xBE0D1 is not `call memset`; not patched\r\n");
     return;
   }
   uint8_t *stub = (uint8_t *)AllocateNearAddress(site, 64);
@@ -7132,17 +7206,17 @@ static void PatchGpuVaMemset(HMODULE hExe) {
     *(int32_t *)(site + 1) = (int32_t)diff;
     FlushInstructionCache(GetCurrentProcess(), site, 5);
     VirtualProtect(site, 5, old, &old);
-    log_line("[gpuva] Patched exe+0xBA3B1: memset(GPU VA) is now fault-tolerant\r\n");
+    log_line("[gpuva] Patched exe+0xBE0D1: memset(GPU VA) is now fault-tolerant\r\n");
   }
 }
 
-// Redirect `call rel32` at exe+0x20F0F9 (end of the boot thread's persistent
+// Redirect `call rel32` at exe+0x21ADD9 (end of the boot thread's persistent
 // phase setup) through a stub that raises g_bootThreadDone first.
 static void PatchBootDoneFlag(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0x0020F0F9;
-  uint8_t *orig = (uint8_t *)hExe + 0x0015C850;
+  uint8_t *site = (uint8_t *)hExe + 0x0021ADD9;
+  uint8_t *orig = (uint8_t *)hExe + 0x0016A670;
   if (site[0] != 0xE8 || site + 5 + *(int32_t *)(site + 1) != orig) {
-    log_line("[boot] WARNING: exe+0x20F0F9 is not `call 0x15C850`; boot-done flag not installed\r\n");
+    log_line("[boot] WARNING: exe+0x21ADD9 is not `call 0x16A670`; boot-done flag not installed\r\n");
     g_bootThreadDone = 1;  // fail open
     return;
   }
@@ -7162,12 +7236,12 @@ static void PatchBootDoneFlag(HMODULE hExe) {
     *(int32_t *)(site + 1) = (int32_t)diff;
     FlushInstructionCache(GetCurrentProcess(), site, 5);
     VirtualProtect(site, 5, old, &old);
-    log_line("[boot] Installed boot-thread-done flag at exe+0x20F0F9\r\n");
+    log_line("[boot] Installed boot-thread-done flag at exe+0x21ADD9\r\n");
   }
 }
 
 // Voice (dub) language independent of the text language. audio:audiosystem.cfg maps each game_language
-// to an audio_language; exe+0x1E8D70 walks that table and at +0x1E9067 does
+// to an audio_language; exe+0x1F42A0 walks that table and at +0x1E9067 does
 // strcmp([r15+8] = current game language, entry.game_language). Launcher option ONRUSH_VOICE_LANG
 // (locale such as pt-BR, or a game code such as "bra") swaps the left side for the chosen language's
 // code, so the entry of that language (and its audio_language) is picked.
@@ -7185,11 +7259,13 @@ static void PatchVoiceLanguage(HMODULE hExe) {
   if (!code) { log_line("[lang] ONRUSH_VOICE_LANG='%s' not recognised; voice follows the text language\r\n", v); return; }
   strcpy_s(g_voiceLangCode, code);
 
-  uint8_t *site = (uint8_t *)hExe + 0x1E9067;
-  uint8_t *strcmpFn = (uint8_t *)hExe + 0x908160;
-  const uint8_t exp[5] = { 0x49, 0x8B, 0x4F, 0x08, 0xE8 };  // mov rcx,[r15+8]; call strcmp
-  if (memcmp(site, exp, 5) != 0 || site + 9 + *(int32_t *)(site + 5) != strcmpFn) {
-    log_line("[lang] WARNING: voice-language site +0x1E9067 differs; not patched\r\n");
+  // 1.80: the table walk moved into exe+0x1F5050(cfg, current language, out); at +0x1F5141 it does
+  // strcmp(r14 = current language, entry.game_language).
+  uint8_t *site = (uint8_t *)hExe + 0x1F5141;
+  uint8_t *strcmpFn = (uint8_t *)hExe + 0x06E750;
+  const uint8_t exp[4] = { 0x49, 0x8B, 0xCE, 0xE8 };  // mov rcx,r14; call strcmp
+  if (memcmp(site, exp, 4) != 0 || site + 8 + *(int32_t *)(site + 4) != strcmpFn) {
+    log_line("[lang] WARNING: voice-language site +0x1F5141 differs; not patched\r\n");
     return;
   }
   uint8_t *stub = (uint8_t *)AllocateNearAddress(site, 64);
@@ -7197,7 +7273,7 @@ static void PatchVoiceLanguage(HMODULE hExe) {
   DWORD old = 0;
   VirtualProtect(stub, 64, PAGE_EXECUTE_READWRITE, &old);
   uint8_t *q = stub;
-  *q++ = 0x49; *q++ = 0x8B; *q++ = 0x4F; *q++ = 0x08;                                       // mov rcx,[r15+8]
+  *q++ = 0x49; *q++ = 0x8B; *q++ = 0xCE;                                                    // mov rcx,r14
   *q++ = 0x48; *q++ = 0xB8; { char *p = g_voiceLangCode; memcpy(q, &p, 8); q += 8; }       // mov rax,&code
   *q++ = 0x80; *q++ = 0x38; *q++ = 0x00;                                                    // cmp byte [rax],0
   *q++ = 0x48; *q++ = 0x0F; *q++ = 0x45; *q++ = 0xC8;                                       // cmovne rcx,rax
@@ -7206,24 +7282,24 @@ static void PatchVoiceLanguage(HMODULE hExe) {
   FlushInstructionCache(GetCurrentProcess(), stub, (size_t)(q - stub));
   int64_t diff = (int64_t)(stub - (site + 5));
   if (diff < INT32_MIN || diff > INT32_MAX) return;
-  if (VirtualProtect(site, 9, PAGE_EXECUTE_READWRITE, &old)) {
-    uint8_t call[9] = { 0xE8, 0, 0, 0, 0, 0x0F, 0x1F, 0x40, 0x00 };                         // call stub; nop4
+  if (VirtualProtect(site, 8, PAGE_EXECUTE_READWRITE, &old)) {
+    uint8_t call[8] = { 0xE8, 0, 0, 0, 0, 0x0F, 0x1F, 0x00 };                               // call stub; nop3
     int32_t d = (int32_t)diff; memcpy(call + 1, &d, 4);
-    memcpy(site, call, 9);
-    FlushInstructionCache(GetCurrentProcess(), site, 9);
-    VirtualProtect(site, 9, old, &old);
-    log_line("[lang] Voice language forced to '%s' (+0x1E9067)\r\n", g_voiceLangCode);
+    memcpy(site, call, 8);
+    FlushInstructionCache(GetCurrentProcess(), site, 8);
+    VirtualProtect(site, 8, old, &old);
+    log_line("[lang] Voice language forced to '%s' (+0x1F5141)\r\n", g_voiceLangCode);
   }
 }
 
-// exe+0x207210 is a thunk: obj -> fn_0x183150(obj->[0x18], obj->[8], 0). While a level loads,
-// obj->[0x18] is sometimes still null when the phase-enter code (exe+0x30614A) calls it: it is
-// filled by a loading thread, so this is a race and the game crashed at exe+0x18316A
+// exe+0x212FA0 is a thunk: obj -> fn_0x190150(obj->[0x18], obj->[8], 0). While a level loads,
+// obj->[0x18] is sometimes still null when the phase-enter code (exe+0x32CF74) calls it: it is
+// filled by a loading thread, so this is a race and the game crashed at exe+0x190168
 // (read of [0+0x18]). Wait for the field (up to 3 s), and skip the call if it never appears.
 typedef void *(__fastcall *PFN_Fn183150)(void *self, void *arg, uint8_t flag);
 static PFN_Fn183150 g_fn183150 = nullptr;
 // The callee also uses obj->[0x18]->[0x18] (passed on to a vtable call that writes [it+0x2C],
-// crash at exe+0x10FBC9), which the loading thread fills a little later, so wait for both.
+// crash at exe+0x1177D9), which the loading thread fills a little later, so wait for both.
 static bool Race207210Ready(uint8_t *obj) {
   uint8_t *inner = *(uint8_t *volatile *)(obj + 0x18);
   return inner && *(void *volatile *)(inner + 0x18);
@@ -7233,15 +7309,15 @@ static void *__fastcall Thunk207210Safe(uint8_t *obj) {
     ULONGLONG t0 = GetTickCount64();
     while (!Race207210Ready(obj) && GetTickCount64() - t0 < 5000) Sleep(1);
     bool ok = Race207210Ready(obj);
-    log_line("[race] exe+0x207210: obj=%p not ready (field+0x18=%p), %s after %llu ms\r\n", obj, *(void **)(obj + 0x18),
+    log_line("[race] exe+0x212FA0: obj=%p not ready (field+0x18=%p), %s after %llu ms\r\n", obj, *(void **)(obj + 0x18),
              ok ? "filled" : "STILL NULL -> call skipped", (unsigned long long)(GetTickCount64() - t0));
     if (!ok) return nullptr;
   }
   return g_fn183150(*(void **)(obj + 0x18), *(void **)(obj + 8), 0);
 }
-// exe+0x2E22B0 picks a start-grid slot ("A1", "B1"...) from the track's list at [[this+0x1C60]+0x1440],
+// exe+0x308090 picks a start-grid slot ("A1", "B1"...) from the track's list at [[this+0x1C60]+0x1440],
 // count at +0x1448. When the race starts before the track finished loading the list is empty, the
-// fallback lookup returns null and the game reads it (crash exe+0x2E24F9). Wait for the list first.
+// fallback lookup returns null and the game reads it (crash exe+0x3082D9). Wait for the list first.
 static void __fastcall WaitStartGrid2E22B0(uint8_t *obj) {
   __try {
     auto ready = [](uint8_t *o) { uint8_t *t = *(uint8_t *volatile *)(o + 0x1C60); return t && *(volatile uint64_t *)(t + 0x1448) != 0; };
@@ -7250,14 +7326,14 @@ static void __fastcall WaitStartGrid2E22B0(uint8_t *obj) {
     ULONGLONG t0 = GetTickCount64();
     while (!ready(obj) && GetTickCount64() - t0 < 5000) Sleep(5);
     if (!ready(obj)) InterlockedIncrement(&s_timeouts);
-    log_line("[race] exe+0x2E22B0: start grid not loaded yet, %s after %llu ms\r\n", ready(obj) ? "filled" : "STILL EMPTY",
+    log_line("[race] exe+0x308090: start grid not loaded yet, %s after %llu ms\r\n", ready(obj) ? "filled" : "STILL EMPTY",
              (unsigned long long)(GetTickCount64() - t0));
   } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 static void PatchStartGridWait2E22B0(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0x2E22B0;
+  uint8_t *site = (uint8_t *)hExe + 0x308090;
   static const uint8_t kExpect[] = { 0x48, 0x89, 0x54, 0x24, 0x10, 0x55, 0x53, 0x41, 0x54 };
-  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x2E22B0 bytes differ; not patched\r\n"); return; }
+  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x308090 bytes differ; not patched\r\n"); return; }
   uint8_t *stub = (uint8_t *)AllocateNearAddress(site, 96);
   if (!stub) return;
   DWORD old = 0;
@@ -7279,15 +7355,15 @@ static void PatchStartGridWait2E22B0(HMODULE hExe) {
   site[0] = 0xE9; int32_t rel = (int32_t)diff; memcpy(site + 1, &rel, 4);
   VirtualProtect(site, 5, old, &old);
   FlushInstructionCache(GetCurrentProcess(), site, 5);
-  log_line("[race] exe+0x2E22B0 guarded (waits for the start grid, crash at +0x2E24F9)\r\n");
+  log_line("[race] exe+0x308090 guarded (waits for the start grid, crash at +0x3082D9)\r\n");
 }
-// exe+0xF2C20 asks the user manager (vtable +0xA0) for a user's slot and reads table[slot]
+// exe+0xFA730 asks the user manager (vtable +0xA0) for a user's slot and reads table[slot]
 // without checking for -1 ("not found"); right after the title screen sign-in this read
 // went 16 GB past the table (crash at exe+0xF2C53). A -1 slot now takes the function's own
-// "false" exit (exe+0xF2C5F), the same one it uses for an empty slot (0x80).
+// "false" exit (exe+0xFA77A), the same one it uses for an empty slot (0x80).
 // The same unchecked lookup exists in three user-privilege checks (scan for
-// "mov ecx,eax; mov ecx,[rdi+rcx*4+0x48]; cmp ecx,0x80"): exe+0xF2B90 crashed on the race
-// loading screen (exe+0xF2BCF), exe+0xF2C20 after the title. Each gets its own "empty slot" exit.
+// "mov ecx,eax; mov ecx,[rdi+rcx*4+0x48]; cmp ecx,0x80"): exe+0xFA6A0 crashed on the race
+// loading screen (exe+0xF2BCF), exe+0xFA730 after the title. Each gets its own "empty slot" exit.
 static void PatchUserSlotSite(HMODULE hExe, uint32_t siteRva, uint32_t failRva) {
   uint8_t *site = (uint8_t *)hExe + siteRva;
   static const uint8_t kExpect[] = { 0x8B, 0xC8, 0x8B, 0x4C, 0x8F, 0x48, 0x81, 0xF9, 0x80, 0x00, 0x00, 0x00 };
@@ -7313,17 +7389,17 @@ static void PatchUserSlotSite(HMODULE hExe, uint32_t siteRva, uint32_t failRva) 
   log_line("[user] exe+0x%X guarded (user slot -1 -> exe+0x%X)\r\n", siteRva, failRva);
 }
 static void PatchUserSlotF2C20(HMODULE hExe) {
-  PatchUserSlotSite(hExe, 0xF2BCD, 0xF2BDB);   // exe+0xF2B90: returns false
-  PatchUserSlotSite(hExe, 0xF2C51, 0xF2C5F);   // exe+0xF2C20: returns false
-  PatchUserSlotSite(hExe, 0xF340A, 0xF3539);   // exe+0xF33xx: skips like an empty slot
+  PatchUserSlotSite(hExe, 0xFA6E5, 0xFA6F6);   // exe+0xFA6A0: returns false
+  PatchUserSlotSite(hExe, 0xFA769, 0xFA77A);   // exe+0xFA730: returns false
+  PatchUserSlotSite(hExe, 0xFADEE, 0xFAF01);   // exe+0xF33xx: skips like an empty slot
 }
 
-// exe+0x1E40C0 (set/clear bit 0 of obj+0xC8) is called by exe+0x36D080 with obj = owner+0x10, which
+// exe+0x1EF270 (set/clear bit 0 of obj+0xC8) is called by exe+0x3AEE90 with obj = owner+0x10, which
 // can still be null while the hub menu loads after a race (crash exe+0x1E40E4). A null obj now returns 0.
 static void PatchNullGuard1E40C0(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0x1E40C0;
+  uint8_t *site = (uint8_t *)hExe + 0x1EF270;
   static const uint8_t kExpect[] = { 0x41, 0x56, 0x48, 0x83, 0xEC, 0x30, 0x48, 0xC7, 0x44, 0x24, 0x20 };
-  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x1E40C0 bytes differ; not patched\r\n"); return; }
+  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x1EF270 bytes differ; not patched\r\n"); return; }
   uint8_t *stub = (uint8_t *)AllocateNearAddress(site, 64);
   if (!stub) return;
   DWORD old = 0;
@@ -7342,72 +7418,73 @@ static void PatchNullGuard1E40C0(HMODULE hExe) {
   site[0] = 0xE9; int32_t rel = (int32_t)diff; memcpy(site + 1, &rel, 4); site[5] = 0x90;
   VirtualProtect(site, 6, old, &old);
   FlushInstructionCache(GetCurrentProcess(), site, 6);
-  log_line("[race] exe+0x1E40C0 guarded (null obj, crash at +0x1E40E4)\r\n");
+  log_line("[race] exe+0x1EF270 guarded (null obj, crash at +0x1E40E4)\r\n");
 }
 
-// exe+0xFD6A0 walks render items (0x60 bytes, word +0x50 = items in the group) and reads a 64-byte
+// exe+0x1059B0 walks render items (0x60 bytes, word +0x50 = items in the group) and reads a 64-byte
 // transform at table[item+0x4C & 0xFFFFFF]. On the race-prep screen some items carry a garbage index
-// (0x430BBC, 0xC9A3BD -> hundreds of MB past the table; crash exe+0xFD804). Such an item group is now
-// ends the walk for that frame (rsi = end, exe+0xFDDA3). Same if the walk already ran past the end.
+// (0x48435C, 0xCF2E9D -> hundreds of MB past the table; crash exe+0xFD804). Such an item group is now
+// ends the walk for that frame (rsi = end, exe+0x1060E0). Same if the walk already ran past the end.
 static volatile LONG g_badXformSkips = 0;
 static void PatchBadTransformIndexFD7E0(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0xFD7E0;
-  static const uint8_t kExpect[] = { 0x81, 0xE1, 0xFF, 0xFF, 0xFF, 0x00, 0x48, 0xC1, 0xE1, 0x06, 0x49, 0x03, 0xC8 };
-  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0xFD7E0 bytes differ; not patched\r\n"); return; }
+  // 1.80: and r8d,0xFFFFFF; shl r8,6; add r8,r11 (table base in r11), 14 bytes at exe+0x105B11.
+  uint8_t *site = (uint8_t *)hExe + 0x105B11;
+  static const uint8_t kExpect[] = { 0x41, 0x81, 0xE0, 0xFF, 0xFF, 0xFF, 0x00, 0x49, 0xC1, 0xE0, 0x06, 0x4D, 0x03, 0xC3 };
+  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x105B11 bytes differ; not patched\r\n"); return; }
   uint8_t *stub = (uint8_t *)AllocateNearAddress(site, 128);
   if (!stub) return;
   DWORD old = 0;
   VirtualProtect(stub, 128, PAGE_EXECUTE_READWRITE, &old);
   uint8_t *q = stub;
-  uint64_t back = (uint64_t)(site + 13), skip = (uint64_t)hExe + 0xFDDA3, cnt = (uint64_t)&g_badXformSkips;
+  uint64_t back = (uint64_t)(site + 14), skip = (uint64_t)hExe + 0x1060E0, cnt = (uint64_t)&g_badXformSkips;
   *q++ = 0x48; *q++ = 0x3B; *q++ = 0xB5; *q++ = 0xC8; *q++ = 0x00; *q++ = 0x00; *q++ = 0x00;  // cmp rsi, [rbp+0xC8] (end)
-  *q++ = 0x73; *q++ = 0x23;                                                         // jae bad (+35): walked past the end
-  *q++ = 0x81; *q++ = 0xE1; *q++ = 0xFF; *q++ = 0xFF; *q++ = 0xFF; *q++ = 0x00;     // and ecx, 0xFFFFFF
-  *q++ = 0x81; *q++ = 0xF9; *q++ = 0x00; *q++ = 0x00; *q++ = 0x10; *q++ = 0x00;     // cmp ecx, 0x100000
+  *q++ = 0x73; *q++ = 0x25;                                                         // jae bad (+37): walked past the end
+  *q++ = 0x41; *q++ = 0x81; *q++ = 0xE0; *q++ = 0xFF; *q++ = 0xFF; *q++ = 0xFF; *q++ = 0x00;  // and r8d, 0xFFFFFF
+  *q++ = 0x41; *q++ = 0x81; *q++ = 0xF8; *q++ = 0x00; *q++ = 0x00; *q++ = 0x10; *q++ = 0x00;  // cmp r8d, 0x100000
   *q++ = 0x73; *q++ = 0x15;                                                         // jae bad (+21)
-  *q++ = 0x48; *q++ = 0xC1; *q++ = 0xE1; *q++ = 0x06;                               // shl rcx, 6
-  *q++ = 0x49; *q++ = 0x03; *q++ = 0xC8;                                            // add rcx, r8
+  *q++ = 0x49; *q++ = 0xC1; *q++ = 0xE0; *q++ = 0x06;                               // shl r8, 6
+  *q++ = 0x4D; *q++ = 0x03; *q++ = 0xC3;                                            // add r8, r11
   *q++ = 0xFF; *q++ = 0x25; memset(q, 0, 4); q += 4; memcpy(q, &back, 8); q += 8;  // jmp back
-  // bad:
-  *q++ = 0x48; *q++ = 0xB8; memcpy(q, &cnt, 8); q += 8;                            // mov rax, &g_badXformSkips
-  *q++ = 0xF0; *q++ = 0xFF; *q++ = 0x00;                                            // lock inc dword [rax]
+  // bad: (r8 is only the index here, dead on this path)
+  *q++ = 0x49; *q++ = 0xB8; memcpy(q, &cnt, 8); q += 8;                            // mov r8, &g_badXformSkips
+  *q++ = 0xF0; *q++ = 0x41; *q++ = 0xFF; *q++ = 0x00;                               // lock inc dword [r8]
   // The group count of a garbage item is garbage too, so stepping over it can run past the end and
   // loop forever: end the whole walk for this frame instead (rsi = end).
   *q++ = 0x48; *q++ = 0x8B; *q++ = 0xB5; *q++ = 0xC8; *q++ = 0x00; *q++ = 0x00; *q++ = 0x00;  // mov rsi, [rbp+0xC8]
-  *q++ = 0xFF; *q++ = 0x25; memset(q, 0, 4); q += 4; memcpy(q, &skip, 8); q += 8;  // jmp exe+0xFDDA3
+  *q++ = 0xFF; *q++ = 0x25; memset(q, 0, 4); q += 4; memcpy(q, &skip, 8); q += 8;  // jmp exe+0x1060E0
   FlushInstructionCache(GetCurrentProcess(), stub, (size_t)(q - stub));
   int64_t diff = (int64_t)(stub - (site + 5));
   if (diff < INT32_MIN || diff > INT32_MAX) return;
-  if (!VirtualProtect(site, 13, PAGE_EXECUTE_READWRITE, &old)) return;
-  site[0] = 0xE9; int32_t rel = (int32_t)diff; memcpy(site + 1, &rel, 4); memset(site + 5, 0x90, 8);
-  VirtualProtect(site, 13, old, &old);
-  FlushInstructionCache(GetCurrentProcess(), site, 13);
-  log_line("[race] exe+0xFD7E0 guarded (bad transform index, crash at +0xFD804)\r\n");
+  if (!VirtualProtect(site, 14, PAGE_EXECUTE_READWRITE, &old)) return;
+  site[0] = 0xE9; int32_t rel = (int32_t)diff; memcpy(site + 1, &rel, 4); memset(site + 5, 0x90, 9);
+  VirtualProtect(site, 14, old, &old);
+  FlushInstructionCache(GetCurrentProcess(), site, 14);
+  log_line("[race] exe+0x105B11 guarded (bad transform index, crash at +0x105B36)\r\n");
 
   // Loop end "cmp rsi,[rbp+0xC8]; jne loop" never ends once a garbage group count steps past the end:
-  // make it "jb loop" (exe+0xFDDAA: 0F 85 -> 0F 82).
-  uint8_t *je = (uint8_t *)hExe + 0xFDDAA;
+  // make it "jb loop" (exe+0x1060E7: 0F 85 -> 0F 82).
+  uint8_t *je = (uint8_t *)hExe + 0x1060E7;
   if (je[0] == 0x0F && je[1] == 0x85 && VirtualProtect(je, 2, PAGE_EXECUTE_READWRITE, &old)) {
     je[1] = 0x82; VirtualProtect(je, 2, old, &old); FlushInstructionCache(GetCurrentProcess(), je, 2);
-    log_line("[race] exe+0xFDDAA loop end is now 'below end' (no endless walk)\r\n");
+    log_line("[race] exe+0x1060E7 loop end is now 'below end' (no endless walk)\r\n");
   }
-  // Bucket id 0x7FFF (garbage material entry, crash exe+0xFDD4C after a lock xadd into the wrong
-  // table) -> skip the item through the function's own skip path exe+0xFDD79.
-  uint8_t *bs = (uint8_t *)hExe + 0xFDB42;
+  // Bucket id 0x7FFF (garbage material entry, crash exe+0x106089 after a lock xadd into the wrong
+  // table) -> skip the item through the function's own skip path exe+0x1060B6.
+  uint8_t *bs = (uint8_t *)hExe + 0x105E82;
   static const uint8_t kB[] = { 0xD1, 0xE8, 0x25, 0xFF, 0x7F, 0x00, 0x00, 0x44, 0x8B, 0xF0 };
-  if (memcmp(bs, kB, sizeof(kB)) != 0) { log_line("[race] exe+0xFDB42 bytes differ; not patched\r\n"); return; }
+  if (memcmp(bs, kB, sizeof(kB)) != 0) { log_line("[race] exe+0x105E82 bytes differ; not patched\r\n"); return; }
   uint8_t *st2 = (uint8_t *)AllocateNearAddress(bs, 64);
   if (!st2) return;
   VirtualProtect(st2, 64, PAGE_EXECUTE_READWRITE, &old);
   q = st2;
-  uint64_t b2 = (uint64_t)(bs + 10), sk2 = (uint64_t)hExe + 0xFDD79;
+  uint64_t b2 = (uint64_t)(bs + 10), sk2 = (uint64_t)hExe + 0x1060B6;
   *q++ = 0xD1; *q++ = 0xE8;                                                         // shr eax, 1
   *q++ = 0x25; *q++ = 0xFF; *q++ = 0x7F; *q++ = 0x00; *q++ = 0x00;                  // and eax, 0x7FFF
   *q++ = 0x3D; *q++ = 0xFF; *q++ = 0x7F; *q++ = 0x00; *q++ = 0x00;                  // cmp eax, 0x7FFF
   *q++ = 0x74; *q++ = 0x11;                                                         // je skip (+17)
   *q++ = 0x44; *q++ = 0x8B; *q++ = 0xF0;                                            // mov r14d, eax
   *q++ = 0xFF; *q++ = 0x25; memset(q, 0, 4); q += 4; memcpy(q, &b2, 8); q += 8;    // jmp back
-  *q++ = 0xFF; *q++ = 0x25; memset(q, 0, 4); q += 4; memcpy(q, &sk2, 8); q += 8;   // skip: jmp exe+0xFDD79
+  *q++ = 0xFF; *q++ = 0x25; memset(q, 0, 4); q += 4; memcpy(q, &sk2, 8); q += 8;   // skip: jmp exe+0x1060B6
   FlushInstructionCache(GetCurrentProcess(), st2, (size_t)(q - st2));
   int64_t d2 = (int64_t)(st2 - (bs + 5));
   if (d2 < INT32_MIN || d2 > INT32_MAX) return;
@@ -7415,19 +7492,19 @@ static void PatchBadTransformIndexFD7E0(HMODULE hExe) {
   bs[0] = 0xE9; int32_t r2 = (int32_t)d2; memcpy(bs + 1, &r2, 4); memset(bs + 5, 0x90, 5);
   VirtualProtect(bs, 10, old, &old);
   FlushInstructionCache(GetCurrentProcess(), bs, 10);
-  log_line("[race] exe+0xFDB42 guarded (bucket 0x7FFF items skipped, crash at +0xFDD4C)\r\n");
+  log_line("[race] exe+0x105E82 guarded (bucket 0x7FFF items skipped, crash at +0x106089)\r\n");
 }
 
-// exe+0x36EB20 (hub widget update, same caller chain as the exe+0x1E40E4 crash) reads
+// exe+0x3B0C00 (hub widget update, same caller chain as the exe+0x1E40E4 crash) reads
 // [mgr+0x25E0] via exe+0x27A220 and calls through it; while the hub reloads after a race it is
-// still null (crash exe+0x36EC4E). Null now leaves the function through a copy of its epilogue.
+// still null (crash exe+0x3B0D34). Null now leaves the function through a copy of its epilogue.
 static volatile LONG g_hubNullSkips = 0;
 static void PatchHubWidgetNull36EC48(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0x36EC48;
-  static const uint8_t kExpect[] = { 0x48, 0x8B, 0xC8, 0x48, 0x8B, 0xE8, 0x48, 0x8B, 0x10 };
-  static const uint8_t kSaves[] = { 0x48, 0x89, 0x9C, 0x24, 0xE0, 0x00, 0x00, 0x00 };   // exe+0x36EB56: mov [rsp+0xE0], rbx
-  if (memcmp(site, kExpect, sizeof(kExpect)) != 0 || memcmp((uint8_t *)hExe + 0x36EB56, kSaves, sizeof(kSaves)) != 0) {
-    log_line("[race] exe+0x36EC48 bytes differ; not patched\r\n"); return;
+  uint8_t *site = (uint8_t *)hExe + 0x3B0D2E;
+  static const uint8_t kExpect[] = { 0x48, 0x8B, 0xC8, 0x4C, 0x8B, 0xF8, 0x48, 0x8B, 0x10 };  // 1.80: mov rcx,rax; mov r15,rax; mov rdx,[rax]
+  static const uint8_t kSaves[] = { 0x48, 0x89, 0x9C, 0x24, 0xF0, 0x00, 0x00, 0x00 };   // exe+0x3B0C34: mov [rsp+0xF0], rbx
+  if (memcmp(site, kExpect, sizeof(kExpect)) != 0 || memcmp((uint8_t *)hExe + 0x3B0C34, kSaves, sizeof(kSaves)) != 0) {
+    log_line("[race] exe+0x3B0D2E bytes differ; not patched\r\n"); return;
   }
   uint8_t *stub = (uint8_t *)AllocateNearAddress(site, 160);
   if (!stub) return;
@@ -7438,21 +7515,22 @@ static void PatchHubWidgetNull36EC48(HMODULE hExe) {
   auto put = [&](std::initializer_list<uint8_t> b) { for (uint8_t x : b) *q++ = x; };
   put({ 0x48, 0x85, 0xC0 });                                // test rax, rax
   put({ 0x74, 0x17 });                                      // jz bail (+23)
-  memcpy(q, site, 9); q += 9;                               // mov rcx,rax ; mov rbp,rax ; mov rdx,[rax]
+  memcpy(q, site, 9); q += 9;                               // mov rcx,rax ; mov r15,rax ; mov rdx,[rax]
   put({ 0xFF, 0x25, 0, 0, 0, 0 }); memcpy(q, &back, 8); q += 8;  // jmp back
   // bail: count, restore what the prologue saved, return
   put({ 0x48, 0xB8 }); memcpy(q, &cnt, 8); q += 8;          // mov rax, &g_hubNullSkips
   put({ 0xF0, 0xFF, 0x00 });                                // lock inc dword [rax]
-  put({ 0x48, 0x8B, 0x9C, 0x24, 0xE0, 0, 0, 0 });           // mov rbx, [rsp+0xE0]
-  put({ 0x48, 0x8B, 0xAC, 0x24, 0xE8, 0, 0, 0 });           // mov rbp, [rsp+0xE8]
-  put({ 0x48, 0x8B, 0xBC, 0x24, 0xC0, 0, 0, 0 });           // mov rdi, [rsp+0xC0]
-  put({ 0x4C, 0x8B, 0xAC, 0x24, 0xB8, 0, 0, 0 });           // mov r13, [rsp+0xB8]
+  put({ 0x48, 0x8B, 0x9C, 0x24, 0xF0, 0, 0, 0 });           // mov rbx, [rsp+0xF0]
+  put({ 0x48, 0x8B, 0xBC, 0x24, 0xD0, 0, 0, 0 });           // mov rdi, [rsp+0xD0]
+  put({ 0x4C, 0x8B, 0xA4, 0x24, 0xC8, 0, 0, 0 });           // mov r12, [rsp+0xC8]
+  put({ 0x4C, 0x8B, 0xAC, 0x24, 0xC0, 0, 0, 0 });           // mov r13, [rsp+0xC0]
+  put({ 0x4C, 0x8B, 0xBC, 0x24, 0xB0, 0, 0, 0 });           // mov r15, [rsp+0xB0]
   put({ 0xC5, 0xF8, 0x28, 0xB4, 0x24, 0xA0, 0, 0, 0 });     // vmovaps xmm6, [rsp+0xA0]
   put({ 0xC5, 0xF8, 0x28, 0xBC, 0x24, 0x90, 0, 0, 0 });     // vmovaps xmm7, [rsp+0x90]
   put({ 0xC5, 0x78, 0x28, 0x84, 0x24, 0x80, 0, 0, 0 });     // vmovaps xmm8, [rsp+0x80]
   put({ 0xC5, 0x78, 0x28, 0x4C, 0x24, 0x70 });              // vmovaps xmm9, [rsp+0x70]
-  put({ 0x48, 0x81, 0xC4, 0xC8, 0, 0, 0 });                 // add rsp, 0xC8
-  put({ 0x41, 0x5F, 0x5E, 0xC3 });                          // pop r15 ; pop rsi ; ret
+  put({ 0x48, 0x81, 0xC4, 0xD8, 0, 0, 0 });                 // add rsp, 0xD8
+  put({ 0x5E, 0x5D, 0xC3 });                                // pop rsi ; pop rbp ; ret
   FlushInstructionCache(GetCurrentProcess(), stub, (size_t)(q - stub));
   int64_t diff = (int64_t)(stub - (site + 5));
   if (diff < INT32_MIN || diff > INT32_MAX) return;
@@ -7460,15 +7538,15 @@ static void PatchHubWidgetNull36EC48(HMODULE hExe) {
   site[0] = 0xE9; int32_t rel = (int32_t)diff; memcpy(site + 1, &rel, 4); memset(site + 5, 0x90, 4);
   VirtualProtect(site, 9, old, &old);
   FlushInstructionCache(GetCurrentProcess(), site, 9);
-  log_line("[race] exe+0x36EC48 guarded (hub widget null, crash at +0x36EC4E)\r\n");
+  log_line("[race] exe+0x3B0D2E guarded (hub widget null, crash at +0x3B0D34)\r\n");
 }
 
-// exe+0x13E870 (render job, called from exe+0x13EB28 with r8 = list read from the scene) gets a
-// null list right after a race ends (crash exe+0x13E895, several job threads). Null/tiny r8 -> return.
+// exe+0x1497B0 (render job, called from exe+0x149A68 with r8 = list read from the scene) gets a
+// null list right after a race ends (crash exe+0x1497D5, several job threads). Null/tiny r8 -> return.
 static void PatchNullList13E870(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0x13E870;
+  uint8_t *site = (uint8_t *)hExe + 0x1497B0;
   static const uint8_t kExpect[] = { 0x40, 0x55, 0x57, 0x41, 0x54, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x48 };
-  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x13E870 bytes differ; not patched\r\n"); return; }
+  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x1497B0 bytes differ; not patched\r\n"); return; }
   uint8_t *stub = (uint8_t *)AllocateNearAddress(site, 64);
   if (!stub) return;
   DWORD old = 0;
@@ -7487,21 +7565,21 @@ static void PatchNullList13E870(HMODULE hExe) {
   site[0] = 0xE9; int32_t rel = (int32_t)diff; memcpy(site + 1, &rel, 4);
   VirtualProtect(site, 5, old, &old);
   FlushInstructionCache(GetCurrentProcess(), site, 5);
-  log_line("[race] exe+0x13E870 guarded (null render list, crash at +0x13E895)\r\n");
+  log_line("[race] exe+0x1497B0 guarded (null render list, crash at +0x1497D5)\r\n");
 }
 
 static void PatchLoadRace207210(HMODULE hExe) {
-  uint8_t *site = (uint8_t *)hExe + 0x207210;
+  uint8_t *site = (uint8_t *)hExe + 0x212FA0;
   static const uint8_t kExpect[12] = { 0x48, 0x8B, 0x51, 0x08, 0x45, 0x33, 0xC0, 0x48, 0x8B, 0x49, 0x18, 0xE9 };
-  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x207210 bytes differ; not patched\r\n"); return; }
+  if (memcmp(site, kExpect, sizeof(kExpect)) != 0) { log_line("[race] exe+0x212FA0 bytes differ; not patched\r\n"); return; }
   int32_t rel; memcpy(&rel, site + 12, 4);
   g_fn183150 = (PFN_Fn183150)(site + 16 + rel);
-  if ((uint8_t *)g_fn183150 != (uint8_t *)hExe + 0x183150) { log_line("[race] exe+0x207210 jmp target unexpected; not patched\r\n"); return; }
+  if ((uint8_t *)g_fn183150 != (uint8_t *)hExe + 0x190150) { log_line("[race] exe+0x212FA0 jmp target unexpected; not patched\r\n"); return; }
   Install14ByteDetour(site, (void *)&Thunk207210Safe);
-  log_line("[race] exe+0x207210 guarded (load race, crash at +0x18316A)\r\n");
+  log_line("[race] exe+0x212FA0 guarded (load race, crash at +0x190168)\r\n");
 }
 
-// The game's Free thunk (exe+0x66340) hands any pointer that its own allocators do
+// The game's Free thunk (exe+0x69940) hands any pointer that its own allocators do
 // not "contain" to the CRT free() through an IAT slot. Our arena pointers are not
 // CRT heap blocks (heap corruption 0xC0000374), so route that single call site
 // through a free() that ignores arena memory.
@@ -7514,12 +7592,12 @@ static void __cdecl ArenaAwareFree(void *p) {
 
 static void PatchGameFreeThunk(HMODULE hExe) {
   // IAT slot of ucrtbase!_free_base in the game exe (used by the free thunks at
-  // exe+0x66370 and exe+0x665B0). Swap the slot itself so every caller is covered.
-  void **iat = (void **)((uint8_t *)hExe + 0x00E32548);
+  // exe+0x69970 and exe+0x69BE0). Swap the slot itself so every caller is covered.
+  void **iat = (void **)((uint8_t *)hExe + 0x00E90570);
   HMODULE ucrt = GetModuleHandleW(L"ucrtbase.dll");
   void *expected = ucrt ? (void *)GetProcAddress(ucrt, "_free_base") : nullptr;
   if (!expected || *iat != expected) {
-    log_line("[arena] WARNING: exe IAT slot +0xE32548 is not ucrtbase!_free_base (%p vs %p); not patched\r\n", *iat, expected);
+    log_line("[arena] WARNING: exe IAT slot +0xE90570 is not ucrtbase!_free_base (%p vs %p); not patched\r\n", *iat, expected);
     return;
   }
   g_origCrtFree = (PFN_CrtFree)*iat;
@@ -7542,6 +7620,7 @@ static void PatchAllocThunk(HMODULE hExe) {
   PatchGameFreeThunk(hExe);
   PatchBootDoneFlag(hExe);
   PatchVoiceLanguage(hExe);
+  PatchUnlockCosmetics(hExe);
   PatchLoadRace207210(hExe);
   PatchUserSlotF2C20(hExe);
   PatchNullGuard1E40C0(hExe);
@@ -7550,32 +7629,32 @@ static void PatchAllocThunk(HMODULE hExe) {
   PatchHubWidgetNull36EC48(hExe);
   PatchNullList13E870(hExe);
   PatchGpuVaMemset(hExe);
-  // 1. Detour 0x00066310 (allocator thunk) with a 14-byte 64-bit indirect jump
-  Install14ByteDetour((uint8_t *)hExe + 0x00066310, (void *)&BridgeAlloc);
-  log_line("[d3d12_x] Patched 0x00066310 with BridgeAlloc detour -> %p\r\n",
+  // 1. Detour 0x00069B80 (allocator thunk) with a 14-byte 64-bit indirect jump
+  Install14ByteDetour((uint8_t *)hExe + 0x00069B80, (void *)&BridgeAlloc);
+  log_line("[d3d12_x] Patched 0x00069B80 with BridgeAlloc detour -> %p\r\n",
            (void *)&BridgeAlloc);
 
-  // 2. Detour PlayGo Package Watcher at 0x000A5360
-  Install14ByteDetour((uint8_t *)hExe + 0x000A5360, (void *)&DetourPlayGoInit);
-  log_line("[d3d12_x] Patched 0x000A5360 with DetourPlayGoInit -> %p\r\n",
+  // 2. Detour PlayGo Package Watcher at 0x000A8450
+  Install14ByteDetour((uint8_t *)hExe + 0x000A8450, (void *)&DetourPlayGoInit);
+  log_line("[d3d12_x] Patched 0x000A8450 with DetourPlayGoInit -> %p\r\n",
            (void *)&DetourPlayGoInit);
 
-  // 3. Detour PlayGo GetChunkStatus at 0x000A0C50
-  Install14ByteDetour((uint8_t *)hExe + 0x000A0C50,
+  // 3. Detour PlayGo GetChunkStatus at 0x000A3E10
+  Install14ByteDetour((uint8_t *)hExe + 0x000A3E10,
                       (void *)&DetourPlayGoGetChunkStatus);
   log_line(
-      "[d3d12_x] Patched 0x000A0C50 with DetourPlayGoGetChunkStatus -> %p\r\n",
+      "[d3d12_x] Patched 0x000A3E10 with DetourPlayGoGetChunkStatus -> %p\r\n",
       (void *)&DetourPlayGoGetChunkStatus);
 
-  // 4. Detour PackageTransferManager at 0x000A5270
-  Install14ByteDetour((uint8_t *)hExe + 0x000A5270,
+  // 4. Detour PackageTransferManager at 0x000A8360
+  Install14ByteDetour((uint8_t *)hExe + 0x000A8360,
                       (void *)&DetourPackageTransferManager);
-  log_line("[d3d12_x] Patched 0x000A5270 with DetourPackageTransferManager -> "
+  log_line("[d3d12_x] Patched 0x000A8360 with DetourPackageTransferManager -> "
            "%p\r\n",
            (void *)&DetourPackageTransferManager);
 
-  // 2. Initialize global flow allocator pointer at 0x016CB228
-  uintptr_t allocPtrRva = 0x016CB228;
+  // 2. Initialize global flow allocator pointer at 0x0167EF58
+  uintptr_t allocPtrRva = 0x0167EF58;
   void **ppAlloc = (void **)((uint8_t *)hExe + allocPtrRva);
   DWORD oldProt2 = 0;
   if (VirtualProtect(ppAlloc, sizeof(void *), PAGE_EXECUTE_READWRITE,
@@ -7589,8 +7668,8 @@ static void PatchAllocThunk(HMODULE hExe) {
     VirtualProtect(ppAlloc, sizeof(void *), oldProt2, &oldProt2);
   }
 
-  // 3. Initialize global string/standard allocator pointer at 0x01594418
-  uintptr_t stringAllocPtrRva = 0x01594418;
+  // 3. Initialize global string/standard allocator pointer at 0x01524488
+  uintptr_t stringAllocPtrRva = 0x01524488;
   void **ppStringAlloc = (void **)((uint8_t *)hExe + stringAllocPtrRva);
   DWORD oldProtStr = 0;
   if (VirtualProtect(ppStringAlloc, sizeof(void *), PAGE_EXECUTE_READWRITE,
@@ -7604,8 +7683,8 @@ static void PatchAllocThunk(HMODULE hExe) {
     VirtualProtect(ppStringAlloc, sizeof(void *), oldProtStr, &oldProtStr);
   }
 
-  // 4. Initialize global allocator ready flag at 0x01594420
-  uintptr_t flagRva = 0x01594420;
+  // 4. Initialize global allocator ready flag at 0x015244D8
+  uintptr_t flagRva = 0x015244D8;
   uint8_t *pFlag = (uint8_t *)hExe + flagRva;
   DWORD oldProtFlag = 0;
   if (VirtualProtect(pFlag, 1, PAGE_EXECUTE_READWRITE, &oldProtFlag)) {
@@ -7613,8 +7692,8 @@ static void PatchAllocThunk(HMODULE hExe) {
     VirtualProtect(pFlag, 1, oldProtFlag, &oldProtFlag);
   }
 
-  // 5. Initialize global root heap allocator pointer at 0x01594428
-  uintptr_t rootAllocPtrRva = 0x01594428;
+  // 5. Initialize global root heap allocator pointer at 0x01524490
+  uintptr_t rootAllocPtrRva = 0x01524490;
   void **ppRootAlloc = (void **)((uint8_t *)hExe + rootAllocPtrRva);
   DWORD oldProt3 = 0;
   if (VirtualProtect(ppRootAlloc, sizeof(void *), PAGE_EXECUTE_READWRITE,
@@ -7628,8 +7707,8 @@ static void PatchAllocThunk(HMODULE hExe) {
     VirtualProtect(ppRootAlloc, sizeof(void *), oldProt3, &oldProt3);
   }
 
-  // 6. Initialize global memory tracker list pointer at 0x015965E8
-  uintptr_t trackerPtrRva = 0x015965E8;
+  // 6. Initialize global memory tracker list pointer at 0x01529128
+  uintptr_t trackerPtrRva = 0x01529128;
   void **ppTracker = (void **)((uint8_t *)hExe + trackerPtrRva);
   DWORD oldProt4 = 0;
   if (VirtualProtect(ppTracker, sizeof(void *), PAGE_EXECUTE_READWRITE,
@@ -7643,34 +7722,34 @@ static void PatchAllocThunk(HMODULE hExe) {
     VirtualProtect(ppTracker, sizeof(void *), oldProt4, &oldProt4);
   }
 
-  // 6b. Initialize [hExe + 0x01782D00] with dummy audio manager buffer
-  void **ppMusicMgr = (void **)((uint8_t *)hExe + 0x01782D00);
+  // 6b. Initialize [hExe + 0x01813990] with dummy audio manager buffer
+  void **ppMusicMgr = (void **)((uint8_t *)hExe + 0x01813990);
   if (ppMusicMgr && *ppMusicMgr == nullptr && GetEnvironmentVariableA("ONRUSH_NO_AUDIO", nullptr, 0) != 0) {
     void *pDummy = VirtualAlloc(nullptr, 0x10000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (pDummy) {
       memset(pDummy, 0, 0x10000);
       *ppMusicMgr = pDummy;
-      log_line("[d3d12_x] Initialized [hExe + 0x01782D00] with dummy audio manager %p\r\n", pDummy);
+      log_line("[d3d12_x] Initialized [hExe + 0x01813990] with dummy audio manager %p\r\n", pDummy);
     }
   }
 
-  // 6c. Initialize [hExe + 0x01769770] with dummy SFX singleton buffer
-  void **ppSfxMgr = (void **)((uint8_t *)hExe + 0x01769770);
+  // 6c. Initialize [hExe + 0x017F8FF0] with dummy SFX singleton buffer
+  void **ppSfxMgr = (void **)((uint8_t *)hExe + 0x017F8FF0);
   if (ppSfxMgr && *ppSfxMgr == nullptr) {
     void *pDummySfx = VirtualAlloc(nullptr, 0x10000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (pDummySfx) {
       memset(pDummySfx, 0, 0x10000);
       *(uint32_t *)((uint8_t *)pDummySfx + 8) = 6;
       *ppSfxMgr = pDummySfx;
-      log_line("[d3d12_x] Initialized [hExe + 0x01769770] with dummy SFX manager %p (state=6)\r\n", pDummySfx);
+      log_line("[d3d12_x] Initialized [hExe + 0x017F8FF0] with dummy SFX manager %p (state=6)\r\n", pDummySfx);
     }
   }
 
-  // 7. Hook ContextAllocator::Reallocate at RVA 0x01376A30 (slot 2 of vtable
+  // 7. Hook ContextAllocator::Reallocate at RVA 0x013E6F00 (slot 2 of vtable
   // 0x141376A20)
-  uintptr_t reallocVtableSlotRva = 0x01376A30;
+  uintptr_t reallocVtableSlotRva = 0x013E6F00;
   void **ppReallocSlot = (void **)((uint8_t *)hExe + reallocVtableSlotRva);
-  void *expectedOrigFn = (void *)((uint8_t *)hExe + 0x7A810);
+  void *expectedOrigFn = (void *)((uint8_t *)hExe + 0x7CF60);
   void *actualOrigFn = *ppReallocSlot;
   log_line("[d3d12_x] ContextAllocator::Reallocate slot check at [hExe + "
            "0x%08llX]: expected=%p, actual=%p\r\n",
@@ -7698,32 +7777,32 @@ static void PatchAllocThunk(HMODULE hExe) {
     }
   }
 
-  // 7. IDXGIFactory2 at 0x0159E0D0 is deferred to EnsureDXGIFactoryGlobal()
+  // 7. IDXGIFactory2 at 0x01538AA8 is deferred to EnsureDXGIFactoryGlobal()
   // outside DllMain / loader lock to prevent DXGI_ERROR_INVALID_CALL
   // (0x887A0001).
 
-  // 8. Patch 0x000B9101 with: xor r15d, r15d; jmp 0x000B9168; followed by NOPs
-  uint8_t *pDxgiQuery = (uint8_t *)hExe + 0x000B9101;
+  // 8. Patch 0x000BCD47 with: xor r13d, r13d; jmp 0x000BCDAE; followed by NOPs
+  uint8_t *pDxgiQuery = (uint8_t *)hExe + 0x000BCD47;
   DWORD oldProtQuery = 0;
   if (VirtualProtect(pDxgiQuery, 0x67, PAGE_EXECUTE_READWRITE, &oldProtQuery)) {
-    pDxgiQuery[0] = 0x45; // xor r15d, r15d
+    pDxgiQuery[0] = 0x45; // xor r13d, r13d (1.80: the interface pointer lives in r13)
     pDxgiQuery[1] = 0x31;
-    pDxgiQuery[2] = 0xFF;
-    pDxgiQuery[3] = 0xEB; // jmp +0x62 (to 0x000B9168)
+    pDxgiQuery[2] = 0xED;
+    pDxgiQuery[3] = 0xEB; // jmp +0x62 (to 0x000BCDAE)
     pDxgiQuery[4] = 0x62;
     memset(pDxgiQuery + 5, 0x90, 0x67 - 5);
     VirtualProtect(pDxgiQuery, 0x67, oldProtQuery, &oldProtQuery);
     FlushInstructionCache(GetCurrentProcess(), pDxgiQuery, 0x67);
-    log_line("[d3d12_x] Patched 0x000B9101 to jump over D3D12->IDXGIDevice2 "
-             "query chain directly to 0x000B9168\r\n");
+    log_line("[d3d12_x] Patched 0x000BCD47 to jump over D3D12->IDXGIDevice2 "
+             "query chain directly to 0x000BCDAE\r\n");
   }
 
-  // 9. Patch 0x000A617B: 41 8B C8 (mov ecx, r8d) -> 49 8B C8 (mov rcx, r8)
+  // 9. Patch 0x000A98CB: 41 8B C8 (mov ecx, r8d) -> 49 8B C8 (mov rcx, r8)
   // On Durango, CPU descriptor handles were 32-bit addresses in the low 4GB.
   // On 64-bit Windows desktop, D3D12 allocates descriptor heaps above 4GB,
   // so truncating r8 to 32 bits with mov ecx, r8d causes an immediate crash
   // when dereferenced.
-  uint8_t *pDescWrite = (uint8_t *)hExe + 0x000A617B;
+  uint8_t *pDescWrite = (uint8_t *)hExe + 0x000A98CB;
   DWORD oldProtDesc = 0;
   if (VirtualProtect(pDescWrite, 3, PAGE_EXECUTE_READWRITE, &oldProtDesc)) {
     if (pDescWrite[0] == 0x41 && pDescWrite[1] == 0x8B &&
@@ -7731,39 +7810,39 @@ static void PatchAllocThunk(HMODULE hExe) {
       pDescWrite[0] =
           0x49; // mov rcx, r8 (preserve 64-bit descriptor heap pointer)
       FlushInstructionCache(GetCurrentProcess(), pDescWrite, 3);
-      log_line("[d3d12_x] Patched 0x000A617B: mov ecx, r8d -> mov rcx, r8 "
+      log_line("[d3d12_x] Patched 0x000A98CB: mov ecx, r8d -> mov rcx, r8 "
                "(64-bit descriptor handle fix)\r\n");
     }
     VirtualProtect(pDescWrite, 3, oldProtDesc, &oldProtDesc);
   }
 
-  // 10. Detour ThreadAlloc at 0x00095DB0 and ThreadFree at 0x00095F00
-  // When loHeapAllocator (at 0x0159D240) is uninitialized/null, 0x00095DB0
+  // 10. Detour ThreadAlloc at 0x00098EC0 and ThreadFree at 0x00099040
+  // When loHeapAllocator (at 0x01537B90) is uninitialized/null, 0x00098EC0
   // causes an immediate null pointer dereference. Detouring these functions
   // provides robust fallback VirtualAlloc memory for Intel TBB worker thread
   // creation and stack allocation.
-  Install14ByteDetour((uint8_t *)hExe + 0x00095DB0, (void *)&DetourThreadAlloc);
-  Install14ByteDetour((uint8_t *)hExe + 0x00095F00, (void *)&DetourThreadFree);
-  log_line("[d3d12_x] Patched 0x00095DB0 (ThreadAlloc) and 0x00095F00 "
+  Install14ByteDetour((uint8_t *)hExe + 0x00098EC0, (void *)&DetourThreadAlloc);
+  Install14ByteDetour((uint8_t *)hExe + 0x00099040, (void *)&DetourThreadFree);
+  log_line("[d3d12_x] Patched 0x00098EC0 (ThreadAlloc) and 0x00099040 "
            "(ThreadFree) detours\r\n");
 
-  // 11. Patch 0x000B367A: 41 8B C8 (mov ecx, r8d) -> 49 8B C8 (mov rcx, r8)
+  // 11. Patch 0x000B6C2A: 41 8B C8 (mov ecx, r8d) -> 49 8B C8 (mov rcx, r8)
   // On Durango, 64-bit buffer descriptor addresses in r8 were truncated to 32
   // bits into ecx because Xbox One physical/virtual allocations were in the low
   // 4GB. On 64-bit Windows desktop, buffer heap addresses are allocated above
   // 4GB, so truncating r8 to 32 bits results in an unmapped low 32-bit address
-  // write at 0x000B3692.
+  // write at 0x000B6C42.
   g_bufferPointerPatchReady = PatchVerifiedR8ToRcx(
-      hExe, 0x000B367A, "buffer pointer-width fix for crash site +0xB3692");
+      hExe, 0x000B6C2A, "buffer pointer-width fix for crash site +0xB6C42");
 
-  // 11b. Title screen null read at exe+0x2603E8 (intermittent, depends on when A is pressed): a map
-  // lookup (0x201C60) returns NULL and the 64 bytes behind it are copied unchecked. Call site
-  // "mov rcx,rax; call 0x464E90" -> "call cave; nop3"; the cave (int3 padding at 0x95F264) returns
-  // the zero block at 0x1592780 when rax is NULL. ONRUSH_NO_TITLE_NULL_FIX=1 disables.
+  // 11b. Title screen null read at exe+0x27AFB8 (intermittent, depends on when A is pressed): a map
+  // lookup (0x20D7D0) returns NULL and the 64 bytes behind it are copied unchecked. Call site
+  // "mov rcx,rax; call 0x4B84A0" -> "call cave; nop3"; the cave (int3 padding at 0x9B26A4) returns
+  // the zero block at 0x1522390 when rax is NULL. ONRUSH_NO_TITLE_NULL_FIX=1 disables.
   if (GetEnvironmentVariableA("ONRUSH_NO_TITLE_NULL_FIX", nullptr, 0) == 0) {
     uint8_t *b = (uint8_t *)hExe;
-    const uintptr_t site = 0x2603E0, cave = 0x95F264, zeros = 0x1592780;
-    const uint8_t expSite[8] = { 0x48, 0x8B, 0xC8, 0xE8, 0xA8, 0x4A, 0x20, 0x00 };  // mov rcx,rax; call 0x464E90
+    const uintptr_t site = 0x27AFB0, cave = 0x9B26A4, zeros = 0x1522390;
+    const uint8_t expSite[8] = { 0x48, 0x8B, 0xC8, 0xE8, 0xE8, 0xD4, 0x23, 0x00 };  // mov rcx,rax; call 0x4B84A0
     bool caveFree = true;
     for (int k = 0; k < 13; ++k) if (b[cave + k] != 0xCC) caveFree = false;
     if (memcmp(b + site, expSite, 8) == 0 && caveFree) {
@@ -7776,14 +7855,14 @@ static void PatchAllocThunk(HMODULE hExe) {
       if (VirtualProtect(b + site, sizeof(call), PAGE_EXECUTE_READWRITE, &op)) { memcpy(b + site, call, sizeof(call)); VirtualProtect(b + site, sizeof(call), op, &op); }
       FlushInstructionCache(GetCurrentProcess(), b + site, sizeof(call));
       FlushInstructionCache(GetCurrentProcess(), b + cave, sizeof(stub));
-      log_line("[d3d12_x] Applied title-screen null-lookup guard at +0x2603E0\r\n");
+      log_line("[d3d12_x] Applied title-screen null-lookup guard at +0x27AFB0\r\n");
     } else {
       log_line("[d3d12_x] WARNING: title null-lookup guard not applied (bytes differ)\r\n");
     }
   }
 
   // 11c. Launcher option "Pular introdução" (ONRUSH_SKIP_INTRO=1 / -skipintro): the persistent phase
-  // (exe+0x2D4740) asks for IntroVideoPhaseConfig (Codemasters logo + intro video) as the first phase.
+  // (exe+0x2F98C0) asks for IntroVideoPhaseConfig (Codemasters logo + intro video) as the first phase.
   // Point that `lea rax,[rip+d]` at StartScreenPhaseConfig instead, so the legal screen goes straight
   // to the title. ONRUSH_SKIP_INTRO_PATCH=0 keeps the original first phase (A is still auto-pressed).
   {
@@ -7795,7 +7874,7 @@ static void PatchAllocThunk(HMODULE hExe) {
     if (pn > 0 && sp[0] == '0') on = false;
     if (on) {
       uint8_t *b = (uint8_t *)hExe;
-      const uintptr_t site = 0x2D47FC, introCfg = 0x14996C0, titleCfg = 0x14998A0;
+      const uintptr_t site = 0x2F9972, introCfg = 0x142C0F0, titleCfg = 0x142C350;
       int32_t d0 = (int32_t)((intptr_t)introCfg - (intptr_t)(site + 7));
       if (b[site] == 0x48 && b[site + 1] == 0x8D && b[site + 2] == 0x05 && memcmp(b + site + 3, &d0, 4) == 0) {
         int32_t d1 = (int32_t)((intptr_t)titleCfg - (intptr_t)(site + 7));
@@ -7803,22 +7882,22 @@ static void PatchAllocThunk(HMODULE hExe) {
         if (VirtualProtect(b + site + 3, 4, PAGE_EXECUTE_READWRITE, &op)) {
           memcpy(b + site + 3, &d1, 4); VirtualProtect(b + site + 3, 4, op, &op);
           FlushInstructionCache(GetCurrentProcess(), b + site, 7);
-          log_line("[d3d12_x] Skip intro: first phase IntroVideoPhase -> StartScreenPhase (+0x2D47FC)\r\n");
+          log_line("[d3d12_x] Skip intro: first phase IntroVideoPhase -> StartScreenPhase (+0x2F9972)\r\n");
         }
       } else {
         log_line("[d3d12_x] WARNING: skip-intro first-phase patch not applied (bytes differ)\r\n");
       }
-      // The legal screen (boot image) stays up for at least 3.1 s: exe+0x210A62 builds the deadline as
+      // The legal screen (boot image) stays up for at least 3.1 s: exe+0x21C695 builds the deadline as
       // now + 1000000 * 3.1 us and loops until it passes AND the boot is done. "mov eax,1000000" ->
       // "mov eax,0" keeps only the real loading wait.
-      const uintptr_t legal = 0x210A62;
+      const uintptr_t legal = 0x21C695;
       const uint8_t expLegal[5] = { 0xB8, 0x40, 0x42, 0x0F, 0x00 };
       if (memcmp(b + legal, expLegal, 5) == 0) {
         DWORD op = 0;
         if (VirtualProtect(b + legal + 1, 4, PAGE_EXECUTE_READWRITE, &op)) {
           memset(b + legal + 1, 0, 4); VirtualProtect(b + legal + 1, 4, op, &op);
           FlushInstructionCache(GetCurrentProcess(), b + legal, 5);
-          log_line("[d3d12_x] Skip intro: legal screen minimum time (3.1 s) removed (+0x210A62)\r\n");
+          log_line("[d3d12_x] Skip intro: legal screen minimum time (3.1 s) removed (+0x21C695)\r\n");
         }
       } else {
         log_line("[d3d12_x] WARNING: legal-screen timer patch not applied (bytes differ)\r\n");
@@ -7829,23 +7908,23 @@ static void PatchAllocThunk(HMODULE hExe) {
   // 12. Patch presentation hooks (CreateSwapChainForCoreWindow redirect + Present early-exit bypass)
   PatchPresentationHooks(hExe);
 
-  // 13. Patch RVA 0x0007BD07: null-check rsi before put_Completed call
-  // At 0x0007BD07, if rsi is NULL, game unconditionally called [rsi + 0x30],
+  // 13. Patch RVA 0x0007E427: null-check rsi before put_Completed call
+  // At 0x0007E427, if rsi is NULL, game unconditionally called [rsi + 0x30],
   // crashing with AV targeting 0x0. We replace the 25 bytes:
   //   test rsi, rsi
-  //   jz 0x0007BD20 (+0x14)
+  //   jz 0x0007E440 (+0x14)
   //   mov r8, qword ptr [rsi]
   //   mov rdx, rax
   //   mov rcx, rsi
   //   call qword ptr [r8 + 0x30]
   //   nop x 7
-  uint8_t *pAsyncCallSite = (uint8_t *)hExe + 0x0007BD07;
+  uint8_t *pAsyncCallSite = (uint8_t *)hExe + 0x0007E427;
   DWORD oldProtAsync = 0;
   if (VirtualProtect(pAsyncCallSite, 25, PAGE_EXECUTE_READWRITE, &oldProtAsync)) {
     if (pAsyncCallSite[0] == 0x4C && pAsyncCallSite[1] == 0x8B && pAsyncCallSite[2] == 0x06) {
       const uint8_t patchBytes[25] = {
           0x48, 0x85, 0xF6,                         // test rsi, rsi
-          0x74, 0x14,                               // jz +0x14 (to 0x7BD20)
+          0x74, 0x14,                               // jz +0x14 (to 0x7E440)
           0x4C, 0x8B, 0x06,                         // mov r8, [rsi]
           0x48, 0x8B, 0xD0,                         // mov rdx, rax
           0x48, 0x8B, 0xCE,                         // mov rcx, rsi
@@ -7854,16 +7933,16 @@ static void PatchAllocThunk(HMODULE hExe) {
       };
       memcpy(pAsyncCallSite, patchBytes, 25);
       FlushInstructionCache(GetCurrentProcess(), pAsyncCallSite, 25);
-      log_line("[d3d12_x] Patched 0x0007BD07: null check on rsi before put_Completed\r\n");
+      log_line("[d3d12_x] Patched 0x0007E427: null check on rsi before put_Completed\r\n");
     } else {
-      log_line("[d3d12_x] WARNING: 0x0007BD07 unexpected bytes (%02X %02X %02X)\r\n",
+      log_line("[d3d12_x] WARNING: 0x0007E427 unexpected bytes (%02X %02X %02X)\r\n",
                pAsyncCallSite[0], pAsyncCallSite[1], pAsyncCallSite[2]);
     }
     VirtualProtect(pAsyncCallSite, 25, oldProtAsync, &oldProtAsync);
   }
 
-  // 14. Patch PlatformInputXbox vtable Slot 8 at RVA 0x0137EF10
-  uintptr_t inputVtableSlotRva = 0x0137EF10;
+  // 14. Patch PlatformInputXbox vtable CheckButton slot at RVA 0x013ED600
+  uintptr_t inputVtableSlotRva = 0x013ED600;  // XBoxJoypad vtable 0x13ED5B8, slot 9 (1.80 added a slot before it)
   void **ppInputSlot = (void **)((uint8_t *)hExe + inputVtableSlotRva);
   DWORD oldProtInput = 0;
   if (VirtualProtect(ppInputSlot, sizeof(void *), PAGE_EXECUTE_READWRITE, &oldProtInput)) {
@@ -7873,27 +7952,27 @@ static void PatchAllocThunk(HMODULE hExe) {
              (unsigned long long)inputVtableSlotRva, &DetourPlatformInputCheckButton);
   }
 
-  // 15. Detour StartScreenPhase::CheckInput at RVA 0x002D4020
-  Install14ByteDetour((uint8_t *)hExe + 0x002D4020, (void *)&DetourStartScreenCheckInput);
-  log_line("[d3d12_x] Patched 0x002D4020 (StartScreenPhase::CheckInput) detour -> %p\r\n",
+  // 15. Detour StartScreenPhase::CheckInput at RVA 0x002F8FF0
+  Install14ByteDetour((uint8_t *)hExe + 0x002F8FF0, (void *)&DetourStartScreenCheckInput);
+  log_line("[d3d12_x] Patched 0x002F8FF0 (StartScreenPhase::CheckInput) detour -> %p\r\n",
            &DetourStartScreenCheckInput);
 
-  // 16. (removed) [exe+0x159DF90] is the loPlatformEvent flag set, not a PlayGo chunk bitmap;
+  // 16. (removed) [exe+0x1538940] is the loPlatformEvent flag set, not a PlayGo chunk bitmap;
   //     setting every bit faked eSessionInviteAccepted and skipped the intro video.
   //     ONRUSH_OLD_EVENTBITS=1 restores the old behaviour for comparison.
   if (InputEnvFlag("ONRUSH_OLD_EVENTBITS")) {
-    uint32_t *pEv = (uint32_t *)((uint8_t *)hExe + 0x0159DF90);
+    uint32_t *pEv = (uint32_t *)((uint8_t *)hExe + 0x01538940);
     for (int i = 0; i < 8; i++) pEv[i] = 0xFFFFFFFF;
     log_line("[d3d12_x] ONRUSH_OLD_EVENTBITS: platform event bits forced to 0xFFFFFFFF\r\n");
   }
 
-  // 17. Patch 0x00095B80 (JobQueue::IsBusy) -> 31 C0 C3 90 90 90 90 (xor eax, eax; ret; 4 x NOP)
-  // This allows phase unloading/transition evaluator (0x002116C0) and background asset loaders (0x0020FE0D)
+  // 17. Patch 0x00098C90 (JobQueue::IsBusy) -> 31 C0 C3 90 90 90 90 (xor eax, eax; ret; 4 x NOP)
+  // This allows phase unloading/transition evaluator (0x0021D1D0) and background asset loaders (0x0021BB0D)
   // to proceed past busy queue wait checks.
-  // ONRUSH_REAL_JOBBUSY=1 keeps the original IsBusy: the phase code (exe+0x21085D) only runs
-  // queued jobs (exe+0x95E10) while IsBusy is true, so with the patch the main-menu phase
+  // ONRUSH_REAL_JOBBUSY=1 keeps the original IsBusy: the phase code (exe+0x21C48D) only runs
+  // queued jobs (exe+0x98F20) while IsBusy is true, so with the patch the main-menu phase
   // jobs queued after the EULA never run.
-  uint8_t *pJobBusy = (uint8_t *)hExe + 0x00095B80;
+  uint8_t *pJobBusy = (uint8_t *)hExe + 0x00098C90;
   DWORD oldProtJob = 0;
   if (InputEnvFlag("ONRUSH_REAL_JOBBUSY")) {
     log_line("[d3d12_x] ONRUSH_REAL_JOBBUSY: keeping original JobQueue::IsBusy\r\n");
@@ -7907,12 +7986,12 @@ static void PatchAllocThunk(HMODULE hExe) {
     pJobBusy[6] = 0x90;
     VirtualProtect(pJobBusy, 7, oldProtJob, &oldProtJob);
     FlushInstructionCache(GetCurrentProcess(), pJobBusy, 7);
-    log_line("[d3d12_x] Patched 0x00095B80 (JobQueue::IsBusy) -> returns 0\r\n");
+    log_line("[d3d12_x] Patched 0x00098C90 (JobQueue::IsBusy) -> returns 0\r\n");
   }
 
-  // 18. Patch RVA 0x001D8920 (Page Element Cleanup null guard trampoline)
+  // 18. Patch RVA 0x001E3830 (Page Element Cleanup null guard trampoline)
   {
-    uint8_t *pTarget = (uint8_t *)hExe + 0x001D8920;
+    uint8_t *pTarget = (uint8_t *)hExe + 0x001E3830;
     DWORD oldProtTramp = 0;
     if (VirtualProtect(g_PageElementCleanupTrampoline,
                        sizeof(g_PageElementCleanupTrampoline),
@@ -7939,16 +8018,16 @@ static void PatchAllocThunk(HMODULE hExe) {
         pTarget[16] = 0x90;
         VirtualProtect(pTarget, 17, oldProtTarget, &oldProtTarget);
         FlushInstructionCache(GetCurrentProcess(), pTarget, 17);
-        log_line("[d3d12_x] Patched 0x001D8920 (PageElementCleanup) with "
+        log_line("[d3d12_x] Patched 0x001E3830 (PageElementCleanup) with "
                  "null-guard trampoline -> %p\r\n",
                  &DetourPageElementCleanup);
       }
     }
   }
 
-  // 19. Detour RVA 0x0022B100 (VideoPlayer::StartVideo) with synchronous open
-  Install14ByteDetour((uint8_t *)hExe + 0x0022B100, (void *)&DetourStartVideo);
-  log_line("[d3d12_x] Patched 0x0022B100 (VideoPlayer::StartVideo) detour -> %p\r\n",
+  // 19. Detour RVA 0x0023FBF0 (VideoPlayer::StartVideo) with synchronous open
+  Install14ByteDetour((uint8_t *)hExe + 0x0023FBF0, (void *)&DetourStartVideo);
+  log_line("[d3d12_x] Patched 0x0023FBF0 (VideoPlayer::StartVideo) detour -> %p\r\n",
            &DetourStartVideo);
 
 
@@ -8264,10 +8343,10 @@ HookedResourceGetGPUVirtualAddress(ID3D12Resource *pRes) {
   }
 
   // Gated diagnostic bypass: Specifically intercept the UAV buffer zeroing
-  // memset at game+0xBA3A8. NOTE: This scratch buffer receives the memset to
+  // memset at game+0xBE0C8. NOTE: This scratch buffer receives the memset to
   // avoid CPU Access Violation on GPU VA. This does NOT initialize the D3D12
   // resource memory; it is strictly a diagnostic progression bypass!
-  if (rva == 0xBA3A8 && IsUavBuffer(pRes)) {
+  if (rva == 0xBE0C8 && IsUavBuffer(pRes)) {
     D3D12_RESOURCE_DESC desc = pRes->GetDesc();
     D3D12_RESOURCE_ALLOCATION_INFO allocInfo = {};
     if (g_pMainDevice && g_TrueGetResourceAllocationInfo) {
@@ -8415,7 +8494,7 @@ static void DeferReleaseTick() {
   { static LONG s_lastSkips = 0; LONG s = g_badXformSkips;
     if (s != s_lastSkips) { log_line("[race] exe+0xFD7E0: %ld render item walk(s) cut short on a bad item so far (frame %ld)\r\n", (long)s, (long)f); s_lastSkips = s; } }
   { static LONG s_lastHub = 0; LONG s = g_hubNullSkips;
-    if (s != s_lastHub) { log_line("[race] exe+0x36EC48: %ld hub widget update(s) skipped (null) so far (frame %ld)\r\n", (long)s, (long)f); s_lastHub = s; } }
+    if (s != s_lastHub) { log_line("[race] exe+0x3B0D2E: %ld hub widget update(s) skipped (null) so far (frame %ld)\r\n", (long)s, (long)f); s_lastHub = s; } }
 }
 
 static void WrapResource(void **ppResource) {
@@ -9215,17 +9294,17 @@ static HRESULT STDMETHODCALLTYPE HookedCreatePlacedResourceX(
        (cleanDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) != 0);
 
   // Other CPU-written staging buffers made by the same game helper
-  // (game+0xBA0FD creates the buffer and Map()s it right away). On Durango
+  // (game+0xBDE1D creates the buffer and Map()s it right away). On Durango
   // this memory is CPU-visible; a DEFAULT heap makes Map fail (E_INVALIDARG,
   // *ppData=NULL) and the game then memcpy()s into NULL (AV in VCRUNTIME).
   bool isCpuStagingBuffer =
-      (!isStaging36 && rva == 0xBA0FD && pDesc &&
+      (!isStaging36 && rva == 0xBDE1D && pDesc &&
        cleanDesc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
        cleanDesc.Flags == D3D12_RESOURCE_FLAG_NONE &&
        InitialState == (D3D12_RESOURCE_STATES)0x400);
 
   bool isIndexBuffer24 =
-      (rva == 0xB8C23 && pDesc &&
+      (rva == 0xBC823 && pDesc &&
        pDesc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
        pDesc->Width == 24 && pDesc->Layout == D3D12_TEXTURE_LAYOUT_ROW_MAJOR &&
        pDesc->Flags == (D3D12_RESOURCE_FLAGS)0x10000 &&
@@ -9436,17 +9515,49 @@ static HRESULT STDMETHODCALLTYPE HookedCreateCommittedResource(
 
   HRESULT hr = E_FAIL;
   D3D12_RESOURCE_STATES stateToUse = InitialResourceState;
-  if (pHeapProperties && pHeapProperties->Type == D3D12_HEAP_TYPE_DEFAULT &&
-      stateToUse == D3D12_RESOURCE_STATE_COPY_DEST) {
+  // Desktop rules the Xbox runtime does not enforce (some drivers accept the console values,
+  // others fail with E_INVALIDARG and the game then dereferences the null resource, e.g.
+  // exe+0xB9A99 on a tester's PC): non-custom heaps take no CPU page / memory pool preference,
+  // upload heaps must start in GENERIC_READ, readback heaps in COPY_DEST, and only desktop heap
+  // flags are allowed.
+  D3D12_HEAP_PROPERTIES heapProps = pHeapProperties ? *pHeapProperties : D3D12_HEAP_PROPERTIES{};
+  if (pHeapProperties && heapProps.Type != D3D12_HEAP_TYPE_CUSTOM) {
+    heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+  }
+  if (pHeapProperties) {
+    heapProps.CreationNodeMask = 0;
+    heapProps.VisibleNodeMask = 0;
+  }
+  HeapFlags = (D3D12_HEAP_FLAGS)(HeapFlags & (D3D12_HEAP_FLAG_SHARED | D3D12_HEAP_FLAG_DENY_BUFFERS |
+                                              D3D12_HEAP_FLAG_ALLOW_DISPLAY | D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER |
+                                              D3D12_HEAP_FLAG_DENY_RT_DS_TEXTURES | D3D12_HEAP_FLAG_DENY_NON_RT_DS_TEXTURES |
+                                              D3D12_HEAP_FLAG_HARDWARE_PROTECTED | D3D12_HEAP_FLAG_ALLOW_WRITE_WATCH |
+                                              D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS | D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT |
+                                              D3D12_HEAP_FLAG_CREATE_NOT_ZEROED));
+  if (pHeapProperties && heapProps.Type == D3D12_HEAP_TYPE_UPLOAD)
+    stateToUse = D3D12_RESOURCE_STATE_GENERIC_READ;
+  else if (pHeapProperties && heapProps.Type == D3D12_HEAP_TYPE_READBACK)
+    stateToUse = D3D12_RESOURCE_STATE_COPY_DEST;
+  else if (pHeapProperties && heapProps.Type == D3D12_HEAP_TYPE_DEFAULT &&
+           stateToUse == D3D12_RESOURCE_STATE_COPY_DEST) {
     stateToUse = D3D12_RESOURCE_STATE_COMMON;
   }
+  if (pHeapProperties) pHeapProperties = &heapProps;
   if (g_TrueCreateCommittedResource) {
     hr = g_TrueCreateCommittedResource(
         pDevice, pHeapProperties, HeapFlags, &cleanDesc, stateToUse,
         pOptimizedClearValue, riidResource, ppvResource);
     if (FAILED(hr)) {
       LogD3D12Failure(pDevice, "CreateCommittedResource", hr);
-      if (InitialResourceState != D3D12_RESOURCE_STATE_COMMON) {
+      log_line("  -> failed: heap type=%d flags=0x%X state=0x%X dim=%d w=%llu h=%u fmt=%d resflags=0x%X layout=%d align=%llu caller=game+0x%llX\r\n",
+               pHeapProperties ? (int)pHeapProperties->Type : -1, (UINT)HeapFlags, (UINT)stateToUse,
+               cleanDesc.Dimension, (unsigned long long)cleanDesc.Width, cleanDesc.Height, cleanDesc.Format,
+               (UINT)cleanDesc.Flags, cleanDesc.Layout, (unsigned long long)cleanDesc.Alignment,
+               (unsigned long long)rva);
+      if (stateToUse != D3D12_RESOURCE_STATE_COMMON &&
+          (!pHeapProperties || pHeapProperties->Type == D3D12_HEAP_TYPE_DEFAULT ||
+           pHeapProperties->Type == D3D12_HEAP_TYPE_CUSTOM)) {
         hr = g_TrueCreateCommittedResource(
             pDevice, pHeapProperties, HeapFlags, &cleanDesc,
             D3D12_RESOURCE_STATE_COMMON, pOptimizedClearValue, riidResource,
@@ -9817,6 +9928,11 @@ static HRESULT STDMETHODCALLTYPE HookedCreateCommandQueueX(
   desc.Flags =
       (D3D12_COMMAND_QUEUE_FLAGS)(desc.Flags &
                                   D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT);
+  // 1.80 passes Xbox priority encodings (e.g. 0x0D000000); desktop accepts NORMAL(0),
+  // HIGH(100) and GLOBAL_REALTIME(10000, needs privileges) only.
+  if (desc.Priority != D3D12_COMMAND_QUEUE_PRIORITY_NORMAL &&
+      desc.Priority != D3D12_COMMAND_QUEUE_PRIORITY_HIGH)
+    desc.Priority = (desc.Priority > 0) ? D3D12_COMMAND_QUEUE_PRIORITY_HIGH : D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
 
   log_line("[d3d12_x] HookedCreateCommandQueueX: type=%u (mapped=%u), "
            "priority=%d, flags=0x%X, ppQueue=%p\r\n",
@@ -9943,6 +10059,7 @@ static ID3DBlob* LoadDxilTwin(const void* bytecode, size_t len) {
   if (sz > 0 && s_cb && SUCCEEDED(s_cb((SIZE_T)sz, &blob)) && blob) { fread(blob->GetBufferPointer(), 1, (size_t)sz, f); psodc::NoteShaderBlob(blob, h, psocache::SH_DXIL); }
   fclose(f); return blob;
 }
+static std::unordered_set<ID3DBlob*> g_simplePsBlob;  // debug flat PS (ONRUSH_DEBUG_SIMPLEPS): stays DXBC
 // Returns a compiled replacement for an original Durango DXBC (looked up by FNV-1a64 of its bytes), or nullptr.
 static ID3DBlob* GetTranslatedShader(const void* bytecode, size_t len, const char* target) {
   static std::unordered_map<uint64_t, ID3DBlob*> s_cache;   // nullptr value = negative cache
@@ -9953,11 +10070,42 @@ static ID3DBlob* GetTranslatedShader(const void* bytecode, size_t len, const cha
   if (it != s_cache.end()) { ID3DBlob* b = it->second; ReleaseSRWLockExclusive(&s_lock); return b; }
   ID3DBlob* blob = nullptr;
   char path[MAX_PATH];
-  if (target[0] == 'p' && GetEnvironmentVariableA("ONRUSH_DEBUG_SIMPLEPS", nullptr, 0) > 0) {
-    static const char* kSimple = "struct O { float4 c0 : SV_Target0; float4 c1 : SV_Target1; float4 c2 : SV_Target2; };\n O main() { O o; o.c0 = float4(1,0,0,1); o.c1 = float4(0,1,0,1); o.c2 = float4(0,0,1,1); return o; }\n";
+  // Debug: ONRUSH_LOG_PSLIST=1 writes every PS hash the game asks for to shaders\ps_used.txt.
+  if (target[0] == 'p' && GetEnvironmentVariableA("ONRUSH_LOG_PSLIST", nullptr, 0) > 0) {
+    FILE* fl = fopen("shaders\\ps_used.txt", "a");
+    if (fl) { fprintf(fl, "%016llx\n", (unsigned long long)h); fclose(fl); }
+  }
+  // Debug: ONRUSH_DEBUG_SIMPLEPS=1 replaces every PS with a flat one; a comma list of hashes (or
+  // @file with one hash per line) replaces only those: magenta on all targets, to see who draws what.
+  static std::string s_simpleList; static int s_simpleMode = -1;
+  if (s_simpleMode < 0) {
+    DWORD n = GetEnvironmentVariableA("ONRUSH_DEBUG_SIMPLEPS", nullptr, 0);
+    std::vector<char> v(n + 1, 0);
+    if (n) GetEnvironmentVariableA("ONRUSH_DEBUG_SIMPLEPS", v.data(), n + 1);
+    s_simpleMode = n == 0 ? 0 : (strcmp(v.data(), "1") == 0 ? 1 : 2);
+    if (s_simpleMode == 2) {
+      if (v[0] == '@') { FILE* fs = fopen(v.data() + 1, "rb"); if (fs) { char buf[4096]; size_t k; while ((k = fread(buf, 1, sizeof(buf), fs)) > 0) s_simpleList.append(buf, k); fclose(fs); } }
+      else s_simpleList = v.data();
+      log_line("[xlate] DEBUG simple PS list: %zu chars\r\n", s_simpleList.size());
+      for (auto& c : s_simpleList) c = (char)tolower((unsigned char)c);
+    }
+  }
+  bool simpleThis = s_simpleMode == 1;
+  int simpleGroup = 0;  // list line "<hash> <digit>" picks the colour group (default 0 = green)
+  if (s_simpleMode == 2) {
+    char hx[20]; sprintf_s(hx, "%016llx", (unsigned long long)h);
+    size_t at = s_simpleList.find(hx); simpleThis = at != std::string::npos;
+    if (simpleThis && at + 17 < s_simpleList.size() && s_simpleList[at + 16] == ' ' && isdigit((unsigned char)s_simpleList[at + 17]))
+      simpleGroup = s_simpleList[at + 17] - '0';
+  }
+  if (target[0] == 'p' && simpleThis) {
+    static const char* kCol[8] = { "0,1,0", "1,0,0", "0,0,1", "1,1,0", "0,1,1", "1,0,1", "1,1,1", "1,0.5,0" };
+    char kSimple[512];
+    sprintf_s(kSimple, "struct O { float4 c0 : SV_Target0; float4 c1 : SV_Target1; float4 c2 : SV_Target2; float4 c3 : SV_Target3; };\n"
+              " O main() { float4 c = float4(%s,1); O o; o.c0 = c; o.c1 = c; o.c2 = c; o.c3 = c; return o; }\n", kCol[simpleGroup & 7]);
     EnsureD3DCompilerLoaded(); ID3DBlob* er2 = nullptr; ID3DBlob* bl2 = nullptr;
     if (g_pfnD3DCompile && SUCCEEDED(g_pfnD3DCompile(kSimple, strlen(kSimple), "simple", nullptr, nullptr, "main", target, 0, 0, &bl2, &er2)) && bl2) {
-      log_line("[xlate] DEBUG simple PS for %016llx\r\n", (unsigned long long)h); s_cache[h] = bl2; ReleaseSRWLockExclusive(&s_lock); return bl2; }
+      log_line("[xlate] DEBUG simple PS for %016llx\r\n", (unsigned long long)h); g_simplePsBlob.insert(bl2); s_cache[h] = bl2; ReleaseSRWLockExclusive(&s_lock); return bl2; }
   }
   if (target[0] == 'v' && GetEnvironmentVariableA("ONRUSH_DEBUG_POSDUMP", nullptr, 0) > 0) {
     // Debug: the translated VS also stores SV_Position of vertices 0..3 into g_CtrBuf at 64 KB + slot*64 (read back at Present).
@@ -10127,6 +10275,7 @@ static void EnsureReplacementShaders() {
   }
 }
 
+static thread_local bool t_psoPsUntranslated = false;
 static HRESULT STDMETHODCALLTYPE HookedCreateGraphicsPipelineStateX(
     ID3D12Device *pDevice, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *pDesc,
     void *pArg3, void *pArg4, const IID *priid, void **ppvPipelineState) {
@@ -10199,7 +10348,7 @@ static HRESULT STDMETHODCALLTYPE HookedCreateGraphicsPipelineStateX(
     // same VS compiled by fxc (DXBC) and by dxc (DXIL twin, picked when the PS is SM6) differs slightly ->
     // striped holes. So every graphics PSO uses the DXIL twins when they exist (ONRUSH_ALLOW_DXBC_VS=1 = old).
     { static const bool s_mixOk = GetEnvironmentVariableA("ONRUSH_ALLOW_DXBC_VS", nullptr, 0) > 0;
-      if (!s_mixOk && tv && !IsDxilBlob(tv)) {
+      if (!s_mixOk && tv && !IsDxilBlob(tv) && !(tp && g_simplePsBlob.count(tp))) {
         ID3DBlob* tv2 = LoadDxilTwin(pDesc->VS.pShaderBytecode, pDesc->VS.BytecodeLength);
         ID3DBlob* tp2 = (tp && !IsDxilBlob(tp)) ? LoadDxilTwin(pDesc->PS.pShaderBytecode, pDesc->PS.BytecodeLength) : tp;
         if (tv2 && (!hasPS || tp2)) { tv = tv2; if (hasPS) tp = tp2; }
@@ -10216,6 +10365,7 @@ static HRESULT STDMETHODCALLTYPE HookedCreateGraphicsPipelineStateX(
       else { log_line("[xlate] SM6 VS without DXIL PS twin -> original shaders\r\n"); tv = nullptr; tp = nullptr; }
     }
     const bool vsOnly = !hasPS && tv;
+    t_psoPsUntranslated = tv && hasPS && !tp;  // PS without translation -> the draw is skipped (see SkipDrawByShader)
     static int s_xlateSeq = 0; static unsigned long long s_xlateMask = 0xFFFFFFFFFFFFFFFFull;
     static bool s_maskInit = false;
     if (!s_maskInit) { s_maskInit = true; char mb[32]; if (GetEnvironmentVariableA("ONRUSH_XLATE_MASK", mb, sizeof(mb)) > 0) s_xlateMask = strtoull(mb, nullptr, 16); }
@@ -10238,9 +10388,13 @@ static HRESULT STDMETHODCALLTYPE HookedCreateGraphicsPipelineStateX(
       modifiedDesc.VS.BytecodeLength  = tv->GetBufferSize();
       { static const bool s_noDepth = GetEnvironmentVariableA("ONRUSH_XLATE_NODEPTH", nullptr, 0) > 0;
         if (s_noDepth) { modifiedDesc.DepthStencilState.DepthEnable = FALSE; modifiedDesc.DepthStencilState.StencilEnable = FALSE;  modifiedDesc.RasterizerState.DepthClipEnable = FALSE; modifiedDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; } }
-      { // ONRUSH_EQ_DEPTH_BIAS=N (experiment): depth-EQUAL passes without depth writes -> GREATER_EQUAL + bias N
+      { // Depth-EQUAL passes without depth writes -> GREATER_EQUAL + bias N (default 0; the game uses reversed Z).
+        // 1.80 draws trees with a position-only prepass VS and a different G-buffer VS; their translations do not
+        // give bit-identical depth, so EQUAL dropped the tree G-buffer draws (black silhouettes).
+        // ONRUSH_EQ_DEPTH_STRICT=1 keeps EQUAL; ONRUSH_EQ_DEPTH_BIAS=N sets the bias.
         static int s_eqBias = -2;
-        if (s_eqBias == -2) { char eb[16] = {}; s_eqBias = GetEnvironmentVariableA("ONRUSH_EQ_DEPTH_BIAS", eb, sizeof(eb)) > 0 ? atoi(eb) : -1; }
+        if (s_eqBias == -2) { char eb[16] = {}; s_eqBias = GetEnvironmentVariableA("ONRUSH_EQ_DEPTH_BIAS", eb, sizeof(eb)) > 0 ? atoi(eb) : 0;
+          if (GetEnvironmentVariableA("ONRUSH_EQ_DEPTH_STRICT", nullptr, 0) > 0) s_eqBias = -1; }
         if (s_eqBias >= 0 && modifiedDesc.DepthStencilState.DepthEnable && modifiedDesc.DepthStencilState.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ZERO &&
             modifiedDesc.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_EQUAL) {
           modifiedDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
@@ -10277,6 +10431,8 @@ static HRESULT STDMETHODCALLTYPE HookedCreateGraphicsPipelineStateX(
   HRESULT hr = E_FAIL;
   if (g_TrueCreateGraphicsPipelineState) {
     hr = psodc::CreateGraphics(g_TrueCreateGraphicsPipelineState, pDevice, pDescToUse, riid, ppvPipelineState);
+    if (SUCCEEDED(hr) && t_psoPsUntranslated && ppvPipelineState && *ppvPipelineState) MarkPsoUntranslatedPs(*ppvPipelineState);
+    t_psoPsUntranslated = false;
     if (FAILED(hr) && pDescToUse != pDesc && pDesc) {
       log_line("[xlate] translated PSO rejected (hr=0x%08lX) -> falling back to original shaders\r\n", (unsigned long)hr);
       LogD3D12Failure(pDevice, "translated CreateGraphicsPipelineState", hr);
@@ -10291,11 +10447,13 @@ static HRESULT STDMETHODCALLTYPE HookedCreateGraphicsPipelineStateX(
                *ppvPipelineState,
                pDesc->VS.pShaderBytecode, (size_t)pDesc->VS.BytecodeLength,
                pDesc->PS.pShaderBytecode, (size_t)pDesc->PS.BytecodeLength);
-      { static char s_ph[32] = {}; static int s_phInit = 0;
+      { static char s_ph[512] = {}; static int s_phInit = 0;  // ONRUSH_LOG_PSHASH=h1,h2,...: PS or VS hashes
         if (!s_phInit) { s_phInit = 1; GetEnvironmentVariableA("ONRUSH_LOG_PSHASH", s_ph, sizeof(s_ph)); }
-        if (s_ph[0] && pDesc->PS.pShaderBytecode && pDesc->PS.BytecodeLength > 16) {
-          char hx[24]; sprintf_s(hx, "%016llx", (unsigned long long)Fnv1a64(pDesc->PS.pShaderBytecode, pDesc->PS.BytecodeLength));
-          if (_stricmp(hx, s_ph) == 0) {
+        if (s_ph[0] && *ppvPipelineState) {
+          char hx[24] = {}, hv[24] = {};
+          if (pDesc->PS.pShaderBytecode && pDesc->PS.BytecodeLength > 16) sprintf_s(hx, "%016llx", (unsigned long long)Fnv1a64(pDesc->PS.pShaderBytecode, pDesc->PS.BytecodeLength));
+          if (pDesc->VS.pShaderBytecode && pDesc->VS.BytecodeLength > 16) sprintf_s(hv, "%016llx", (unsigned long long)Fnv1a64(pDesc->VS.pShaderBytecode, pDesc->VS.BytecodeLength));
+          if ((hx[0] && strstr(s_ph, hx)) || (hv[0] && strstr(s_ph, hv))) {
             LONG k = InterlockedIncrement(&g_dbgPsoN) - 1;
             if (k < 8) g_dbgPso[k] = *ppvPipelineState;
             const D3D12_RENDER_TARGET_BLEND_DESC &b = pDesc->BlendState.RenderTarget[0];
@@ -10841,12 +10999,12 @@ EXTERN_C HRESULT WINAPI OnRushD3D12XboxCreateDevice(void *pAdapter,
   if (!riid || !ppDevice)
     return E_POINTER;
 
-  // The latest supplied run crashed at game_release_xbox.exe+0xB3692,
-  // matching the unpatched pointer-width instruction at RVA 0xB367A.
+  // The latest supplied run crashed at game_release_xbox.exe+0xB6C42,
+  // matching the unpatched pointer-width instruction at RVA 0xB6C2A.
   // Stop here on a mismatched executable instead of continuing into an AV.
   if (!g_bufferPointerPatchReady) {
     *ppDevice = nullptr;
-    log_line("[d3d12_x] FATAL: required patch at RVA 0xB367A was not verified; "
+    log_line("[d3d12_x] FATAL: required patch at RVA 0xB6C2A was not verified; "
              "refusing device creation. Check the game EXE build and Ghidra "
              "bytes.\r\n");
     return HRESULT_FROM_WIN32(ERROR_REVISION_MISMATCH);
@@ -11403,8 +11561,8 @@ static bool DumpTexStats(ID3D12Resource *pRes, UINT &outNonZeroPct10, UINT64 &ou
 static void DumpMipList() {
   uint8_t *hx = (uint8_t *)GetModuleHandleW(nullptr);
   __try {
-    uint8_t *lst = *(uint8_t **)(hx + 0x015C6D88);
-    uint8_t *cur = *(uint8_t **)(hx + 0x015C7388);
+    uint8_t *lst = *(uint8_t **)(hx + 0x0157E870);
+    uint8_t *cur = *(uint8_t **)(hx + 0x0157EF78);
     uint64_t begin = *(uint64_t *)(lst + 8), bytes = *(uint64_t *)(lst + 0x10);
     log_line("[mips] list=%p entries=%llu cur=%p\r\n", lst, (unsigned long long)(bytes / 16), cur);
     for (uint64_t i = 0; i < bytes / 16 && i < 12; ++i) {
@@ -11462,7 +11620,8 @@ static void GpuCbvProbe() {
   uint8_t* mp = nullptr; D3D12_RANGE rr = { 0, (SIZE_T)(kBytes * 24) };
   if (SUCCEEDED(rb->Map(0, &rr, (void**)&mp)) && mp) {
     for (LONG i = 0; i < n && i < 24; ++i) { const float* f = (const float*)(mp + i * kBytes); UINT64 nw = sizes[i] / 4; int nz = 0; for (UINT64 k = 0; k < nw; ++k) if (f[k] != 0.0f) ++nz;
-      log_line("[gpucbv] #%ld draw#%u param%d res=%p off=%llu nonzero=%d/%llu first=%g %g %g %g | %g %g %g %g\r\n", (long)i, g_cbvProbe[i].draw, g_cbvProbe[i].param, (void*)g_cbvProbe[i].res, (unsigned long long)g_cbvProbe[i].off, nz, (unsigned long long)nw, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]); }
+      log_line("[gpucbv] #%ld draw#%u param%d res=%p off=%llu nonzero=%d/%llu first=%g %g %g %g | %g %g %g %g\r\n", (long)i, g_cbvProbe[i].draw, g_cbvProbe[i].param, (void*)g_cbvProbe[i].res, (unsigned long long)g_cbvProbe[i].off, nz, (unsigned long long)nw, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+      if (nw >= 84 * 4) for (int r : { 12, 13, 14, 15, 16, 17, 18, 19, 82, 83 }) log_line("[gpucbv]   #%ld c%d = %g %g %g %g\r\n", (long)i, r, f[r * 4], f[r * 4 + 1], f[r * 4 + 2], f[r * 4 + 3]); }
     D3D12_RANGE wr = { 0, 0 }; rb->Unmap(0, &wr); }
 }
 static void GpuGeoProbe() {
@@ -11596,9 +11755,9 @@ static void PsQueryReport() {
   LONG zeroPs = 0;
   for (LONG i = 0; i < n; ++i) {
     if (d[i].PSInvocations == 0) ++zeroPs;
-    if (i < 60)
-      log_line("[psq] #%ld %c count=%u pso=%p rt=%p IAverts=%llu IAprims=%llu VS=%llu CInv=%llu CPrim=%llu PS=%llu\r\n", (long)i, g_psInfo[i].kind, g_psInfo[i].count,
-               g_psInfo[i].pso, g_psInfo[i].rt, (unsigned long long)d[i].IAVertices, (unsigned long long)d[i].IAPrimitives,
+    if (i < (GetEnvironmentVariableA("ONRUSH_PSQ_VS", nullptr, 0) > 0 ? 1024 : 60))
+      log_line("[psq] #%ld %c count=%u pso=%p vsh=%016llx psh=%016llx rc0=%08X rt=%p IAverts=%llu IAprims=%llu VS=%llu CInv=%llu CPrim=%llu PS=%llu\r\n", (long)i, g_psInfo[i].kind, g_psInfo[i].count,
+               g_psInfo[i].pso, g_psInfo[i].vs, g_psInfo[i].ps, g_psInfo[i].rc0, g_psInfo[i].rt, (unsigned long long)d[i].IAVertices, (unsigned long long)d[i].IAPrimitives,
                (unsigned long long)d[i].VSInvocations, (unsigned long long)d[i].CInvocations, (unsigned long long)d[i].CPrimitives,
                (unsigned long long)d[i].PSInvocations);
   }
@@ -11788,11 +11947,11 @@ static DWORD WINAPI HangWatchdogThread(LPVOID) {
     dumped = true;
     log_line("[hang] no Present for %llu ms -> thread stacks:\r\n", idle);
     {
-      // exe+0xBCC80 spins until [exe+0x159E140]->GetCompletedValue() >= target ([exe+0x159E1C0] + 1).
+      // exe+0xB7E50 spins until [exe+0x1538B50]->GetCompletedValue() >= target ([exe+0x1538B00] + 1).
       uint8_t *hx = (uint8_t *)GetModuleHandleW(nullptr);
-      ID3D12Fence *f = *(ID3D12Fence **)(hx + 0x159E140);
-      ID3D12Fence *f2 = *(ID3D12Fence **)(hx + 0x159E138);
-      unsigned long long tgt = *(unsigned long long *)(hx + 0x159E1C0);
+      ID3D12Fence *f = *(ID3D12Fence **)(hx + 0x1538B50);
+      ID3D12Fence *f2 = *(ID3D12Fence **)(hx + 0x1538B48);
+      unsigned long long tgt = *(unsigned long long *)(hx + 0x1538B00);
       log_line("[hang] frame fence %p completed=%llu (target %llu) | fence2 %p completed=%llu | device removed=0x%08lX\r\n",
                f, f ? (unsigned long long)f->GetCompletedValue() : 0ull, tgt + 1, f2,
                f2 ? (unsigned long long)f2->GetCompletedValue() : 0ull,
@@ -12076,11 +12235,13 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
       SetForegroundWindow(g_desktopHwnd);
     }
 
-    // ONRUSH_DUMP_RANGE=start:count -> also dump `count` consecutive frames from `start` (flicker checks)
-    static long s_drStart = -2, s_drCount = 0;
-    if (s_drStart == -2) { char rb[32] = {}; s_drStart = -1;
-      if (GetEnvironmentVariableA("ONRUSH_DUMP_RANGE", rb, sizeof(rb)) > 0) sscanf_s(rb, "%ld:%ld", &s_drStart, &s_drCount); }
-    const bool inDumpRange = s_drStart >= 0 && frame_count >= s_drStart && frame_count < s_drStart + s_drCount;
+    // ONRUSH_DUMP_RANGE=start:count[:step] -> also dump frames start..start+count-1 (every `step`-th; flicker checks)
+    static long s_drStart = -2, s_drCount = 0, s_drStep = 1;
+    if (s_drStart == -2) { char rb[48] = {}; s_drStart = -1;
+      if (GetEnvironmentVariableA("ONRUSH_DUMP_RANGE", rb, sizeof(rb)) > 0) sscanf_s(rb, "%ld:%ld:%ld", &s_drStart, &s_drCount, &s_drStep);
+      if (s_drStep < 1) s_drStep = 1; }
+    const bool inDumpRange = s_drStart >= 0 && frame_count >= s_drStart && frame_count < s_drStart + s_drCount &&
+                             (frame_count - s_drStart) % s_drStep == 0;
     // Periodic frame captures (frame_*.bmp, ~8 MB each, stall the GPU): only with the launcher's debug
     // option "Capturas de quadros" (ONRUSH_FRAME_DUMPS=1).
     static int s_frameDumps = -1;
@@ -12101,7 +12262,7 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
     // Ensure active gamepad is always populated in PlatformInputXbox singleton
     HMODULE hExePresent = GetModuleHandleW(nullptr);
     if (hExePresent) {
-      void **ppPlatformInput = (void **)((uint8_t *)hExePresent + 0x015A5660);
+      void **ppPlatformInput = (void **)((uint8_t *)hExePresent + 0x01543480);
       if (ppPlatformInput && *ppPlatformInput) {
         void **ppActiveGamepad = (void **)((uint8_t *)*ppPlatformInput + 0x48);
         if (*ppActiveGamepad == nullptr) {
@@ -12120,37 +12281,37 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
       bool advanceReq = !NoForcePhase() && (s_enginePhaseStep < 3) && IsAdvanceInputHeld();
       static void *s_lateNp = nullptr, *s_lateFixed = nullptr;
       static int s_origWorker = -1; if (s_origWorker < 0) s_origWorker = InputEnvFlag("ONRUSH_ORIG_PHASE_WORKER") ? 1 : 0;
-      if (!s_origWorker && MaterializePendingPhase(hExePresent)) s_lateNp = *(void **)((uint8_t *)hExePresent + 0x016CAC18);
+      if (!s_origWorker && MaterializePendingPhase(hExePresent)) s_lateNp = *(void **)((uint8_t *)hExePresent + 0x0167E940);
       // A phase built late here (its construct job ran too early) can find its transition
-      // request already dropped: EvalPhase ran with nextPhase==NULL and cleared [exe+0x16CAC21].
-      // Once it is ready ([exe+0x16CABA0]==1) raise the request again, as SetNextPhase did.
-      // Opt-in only (ONRUSH_LATE_PHASE_FIX=1): re-raising loops the transition phase 0x1499498 and
+      // request already dropped: EvalPhase ran with nextPhase==NULL and cleared [exe+0x167E949].
+      // Once it is ready ([exe+0x167E8C8]==1) raise the request again, as SetNextPhase did.
+      // Opt-in only (ONRUSH_LATE_PHASE_FIX=1): re-raising loops the transition phase 0x142BEC8 and
       // ends in _purecall (test 06/11).
       if (s_lateNp && s_lateNp != s_lateFixed && InputEnvFlag("ONRUSH_LATE_PHASE_FIX")) {
-        uint8_t *pF1 = (uint8_t *)hExePresent + 0x016CAC21;
-        void *npNow = *(void **)((uint8_t *)hExePresent + 0x016CAC18);
+        uint8_t *pF1 = (uint8_t *)hExePresent + 0x0167E949;
+        void *npNow = *(void **)((uint8_t *)hExePresent + 0x0167E940);
         if (npNow != s_lateNp) s_lateNp = nullptr;
-        else if (*((uint8_t *)hExePresent + 0x016CABA0) && !*pF1) {
+        else if (*((uint8_t *)hExePresent + 0x0167E8C8) && !*pF1) {
           *pF1 = 1; s_lateFixed = s_lateNp;
           log_line("[phase] late-built next phase %p is ready but its request was dropped -> re-raised f1\r\n", s_lateNp);
         }
       }
-      // ONRUSH_FORCE_PHASE_READY=1: if a materialized next phase stays "not ready" ([exe+0x16CABA0]==0)
-      // for 120 frames (its completion job exe+0x20FD00 never ran), run that completion once.
+      // ONRUSH_FORCE_PHASE_READY=1: if a materialized next phase stays "not ready" ([exe+0x167E8C8]==0)
+      // for 120 frames (its completion job exe+0x21BA00 never ran), run that completion once.
       { static int s_forceReadyI = -1;
         if (s_forceReadyI < 0) s_forceReadyI = InputEnvFlag("ONRUSH_FORCE_PHASE_READY") ? 1 : 0;
         const bool s_forceReady = s_forceReadyI == 1;
         static void *s_waitPhase = nullptr; static int s_waitFrames = 0; static void *s_doneFor = nullptr;
-        void *np = *(void **)((uint8_t *)hExePresent + 0x016CAC18);
-        uint8_t ready1 = *(uint8_t *)((uint8_t *)hExePresent + 0x016CABA0);
+        void *np = *(void **)((uint8_t *)hExePresent + 0x0167E940);
+        uint8_t ready1 = *(uint8_t *)((uint8_t *)hExePresent + 0x0167E8C8);
         if (s_forceReady && np && !ready1 && np != s_doneFor) {
           if (np != s_waitPhase) { s_waitPhase = np; s_waitFrames = 0; }
           if (++s_waitFrames >= 120) {
-            log_line("[phase] FORCE_PHASE_READY: next phase %p not ready after 120 frames -> calling exe+0x20FD00\r\n", np);
-            ((void (*)())((uint8_t *)hExePresent + 0x0020FD00))();
-            // SetNextPhase (exe+0x210FE8) had raised the transition request flag; it gets cleared
+            log_line("[phase] FORCE_PHASE_READY: next phase %p not ready after 120 frames -> calling exe+0x21BA00\r\n", np);
+            ((void (*)())((uint8_t *)hExePresent + 0x0021BA00))();
+            // SetNextPhase (exe+0x21CC68) had raised the transition request flag; it gets cleared
             // while the completion job is missing, so raise it again for the engine's EvalPhase.
-            *(uint8_t *)((uint8_t *)hExePresent + 0x016CAC21) = 1;
+            *(uint8_t *)((uint8_t *)hExePresent + 0x0167E949) = 1;
             s_doneFor = np;
           }
         } }
@@ -12215,9 +12376,9 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
                  InterlockedExchange(&g_cmdStats[STAT_COPYTEX], 0), InterlockedExchange(&g_cmdStats[STAT_EXECIND], 0),
                  InterlockedExchange(&g_cmdStats[STAT_PSO], 0));
         {
-          // UI selector stacks (exe+0x169E7C8: 7 selectors; page stack count at +0x600, entries stride 0x18)
+          // UI selector stacks (exe+0x1651DB0: 7 selectors; page stack count at +0x600, entries stride 0x18)
           __try {
-            void **sel = (void **)((uint8_t *)hExePresent + 0x0169E7C8);
+            void **sel = (void **)((uint8_t *)hExePresent + 0x01651DB0);
             for (int si = 0; si < 7; ++si) {
               uint8_t *sp = (uint8_t *)sel[si];
               if (!sp) continue;
@@ -12262,20 +12423,20 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
           rt->Release();
         }
       }
-      void *curPhase = *(void **)((uint8_t *)hExePresent + 0x016CAC08);
-      void *nextPhase = *(void **)((uint8_t *)hExePresent + 0x016CAC18);
-      uint8_t flag0 = *(uint8_t *)((uint8_t *)hExePresent + 0x016CAC20);
-      uint8_t flag1 = *(uint8_t *)((uint8_t *)hExePresent + 0x016CAC21);
-      uint8_t phaseReady0 = *(uint8_t *)((uint8_t *)hExePresent + 0x016CAB9F);
-      uint8_t phaseReady1 = *(uint8_t *)((uint8_t *)hExePresent + 0x016CABA0);
-      uint32_t cond = *(uint32_t *)((uint8_t *)hExePresent + 0x016CABEC);
+      void *curPhase = *(void **)((uint8_t *)hExePresent + 0x0167E930);
+      void *nextPhase = *(void **)((uint8_t *)hExePresent + 0x0167E940);
+      uint8_t flag0 = *(uint8_t *)((uint8_t *)hExePresent + 0x0167E948);
+      uint8_t flag1 = *(uint8_t *)((uint8_t *)hExePresent + 0x0167E949);
+      uint8_t phaseReady0 = *(uint8_t *)((uint8_t *)hExePresent + 0x0167E8C7);
+      uint8_t phaseReady1 = *(uint8_t *)((uint8_t *)hExePresent + 0x0167E8C8);
+      uint32_t cond = *(uint32_t *)((uint8_t *)hExePresent + 0x0167E914);
 
       {
         static bool s_bootLogged = false;
         if (!s_bootLogged && g_bootThreadDone) {
           s_bootLogged = true;
           log_line("[boot] boot thread done seen at frame %ld (curPhase=%p) audio_language='%.15s'\r\n", frame_count, curPhase,
-                   (const char *)hExePresent + 0x016C24A0);
+                   (const char *)hExePresent + 0x01675B50);
         }
       }
       if (frame_count <= 10 || (frame_count % 60) == 0) {
@@ -12298,10 +12459,10 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
         advanceReq = true;
         s_enginePhaseStep = 1;
       }
-      // Step 1: In IntroVideoPhase (0x01499660) -> Play intro videos!
+      // Step 1: In IntroVideoPhase (0x0142C090) -> Play intro videos!
       // The engine leaves the intro by itself when the video ends; we only force it on skip
       // input, or as a safety net after a long time (the intro video is ~76 s).
-      else if (s_enginePhaseStep == 1 && curRvaNow == 0x01499660) {
+      else if (s_enginePhaseStep == 1 && curRvaNow == 0x0142C090) {
         bool skipRequested = IsAdvanceInputHeld() ||
                              (GameWindowFocused() && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) ||
                              (frame_count >= 9000);
@@ -12312,9 +12473,9 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
           s_enginePhaseStep = 2;
         }
       }
-      // Step 2: In StartScreenPhase (0x01499840) -> 'Press Any Button' title screen
+      // Step 2: In StartScreenPhase (0x0142C2F0) -> 'Press Any Button' title screen
       // Transition to MainMenuPhase on user button press OR after 500 frames
-      else if (s_enginePhaseStep == 2 && curRvaNow == 0x01499840) {
+      else if (s_enginePhaseStep == 2 && curRvaNow == 0x0142C2F0) {
         bool startRequested = IsAdvanceInputHeld() || (frame_count >= 500);
         if (startRequested || nextPhase != nullptr) {
           log_line("[phase] Pacing: Requesting transition to MainMenuPhase (frame %ld, start=%d, nextPhase=%p)...\r\n",
@@ -12331,23 +12492,23 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
             void *vtable;
             uint64_t flags;
           } desc;
-          uintptr_t targetVtblRva = 0x014996C0; // IntroVideoPhaseConfig by default
+          uintptr_t targetVtblRva = 0x0142C0F0; // IntroVideoPhaseConfig by default
           if (curPhase) {
             void *curVtbl = *(void **)curPhase;
             uintptr_t curVtblRva = curVtbl ? (uintptr_t)((uint8_t *)curVtbl - (uint8_t *)hExePresent) : 0;
-            if (curVtblRva == 0x01499660) {
-              targetVtblRva = 0x014998A0; // StartScreenPhaseConfig
-            } else if (curVtblRva == 0x01499840) {
-              targetVtblRva = 0x013C6E10; // MainMenuPhaseConfig
+            if (curVtblRva == 0x0142C090) {
+              targetVtblRva = 0x0142C350; // StartScreenPhaseConfig
+            } else if (curVtblRva == 0x0142C2F0) {
+              targetVtblRva = 0x0141BA40; // MainMenuPhaseConfig
             }
           }
           desc.vtable = (void *)((uint8_t *)hExePresent + targetVtblRva);
           desc.flags = 1;
           typedef void (*SetNextPhaseFn)(void *pDesc, int mode);
-          SetNextPhaseFn SetNextPhase = (SetNextPhaseFn)((uint8_t *)hExePresent + 0x00210F00);
+          SetNextPhaseFn SetNextPhase = (SetNextPhaseFn)((uint8_t *)hExePresent + 0x0021CB80);
           SetNextPhase(&desc, 0);
           MaterializePendingPhase(hExePresent);
-          nextPhase = *(void **)((uint8_t *)hExePresent + 0x016CAC18);
+          nextPhase = *(void **)((uint8_t *)hExePresent + 0x0167E940);
           log_line("[input] Present (frame %ld): Called SetNextPhase(targetVtblRva=0x%08llX) -> nextPhase=%p\r\n",
                    frame_count, (unsigned long long)targetVtblRva, nextPhase);
         }
@@ -12355,9 +12516,9 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
         if (nextPhase != nullptr && !PhaseTransitionSafe(hExePresent, curPhase)) {
           s_enginePhaseStep = stepBefore;  // retry on a later frame
         } else if (nextPhase != nullptr) {
-          uint8_t *pFlag0 = (uint8_t *)hExePresent + 0x016CAC20;
-          uint8_t *pFlag1 = (uint8_t *)hExePresent + 0x016CAC21;
-          uint8_t *pPhaseReady1 = (uint8_t *)hExePresent + 0x016CABA0;   // (0x16CAB9F is a pointer byte, never write it)
+          uint8_t *pFlag0 = (uint8_t *)hExePresent + 0x0167E948;
+          uint8_t *pFlag1 = (uint8_t *)hExePresent + 0x0167E949;
+          uint8_t *pPhaseReady1 = (uint8_t *)hExePresent + 0x0167E8C8;   // (0x167E8C7 is a pointer byte, never write it)
           *pFlag0 = 1;
           *pFlag1 = 1;
           *pPhaseReady1 = 1;
@@ -12365,10 +12526,10 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
 
           log_line("[phase] Calling EvaluatePhaseTransition (0x1402116C0) directly (frame %ld)...\r\n", frame_count);
           typedef void (*EvalPhaseFn)();
-          EvalPhaseFn EvalPhase = (EvalPhaseFn)((uint8_t *)hExePresent + 0x002116C0);
+          EvalPhaseFn EvalPhase = (EvalPhaseFn)((uint8_t *)hExePresent + 0x0021D1D0);
           EvalPhase();
-          curPhase = *(void **)((uint8_t *)hExePresent + 0x016CAC08);
-          nextPhase = *(void **)((uint8_t *)hExePresent + 0x016CAC18);
+          curPhase = *(void **)((uint8_t *)hExePresent + 0x0167E930);
+          nextPhase = *(void **)((uint8_t *)hExePresent + 0x0167E940);
           void *curVtbl = curPhase ? *(void **)curPhase : nullptr;
           uintptr_t curRva = curVtbl ? (uintptr_t)((uint8_t *)curVtbl - (uint8_t *)hExePresent) : 0;
           log_line("[phase] EvaluatePhaseTransition completed: curPhase=%p (vtbl_rva=0x%llX), nextPhase=%p\r\n",
@@ -12380,10 +12541,10 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
       if (!NoForcePhase() && nextPhase != nullptr && (flag0 != 0 || flag1 != 0) && PhaseTransitionSafe(hExePresent, curPhase)) {
         log_line("[phase] Engine transition pending (frame %ld, f0=%u, f1=%u): calling EvaluatePhaseTransition...\r\n", frame_count, flag0, flag1);
         typedef void (*EvalPhaseFn)();
-        EvalPhaseFn EvalPhase = (EvalPhaseFn)((uint8_t *)hExePresent + 0x002116C0);
+        EvalPhaseFn EvalPhase = (EvalPhaseFn)((uint8_t *)hExePresent + 0x0021D1D0);
         EvalPhase();
-        curPhase = *(void **)((uint8_t *)hExePresent + 0x016CAC08);
-        nextPhase = *(void **)((uint8_t *)hExePresent + 0x016CAC18);
+        curPhase = *(void **)((uint8_t *)hExePresent + 0x0167E930);
+        nextPhase = *(void **)((uint8_t *)hExePresent + 0x0167E940);
         void *curVtbl = curPhase ? *(void **)curPhase : nullptr;
         uintptr_t curRva = curVtbl ? (uintptr_t)((uint8_t *)curVtbl - (uint8_t *)hExePresent) : 0;
         log_line("[phase] Engine transition completed: curPhase=%p (vtbl_rva=0x%llX), nextPhase=%p\r\n",
@@ -12578,28 +12739,28 @@ static LONG WINAPI VectoredCrashHandler(PEXCEPTION_POINTERS pExInfo) {
              pExInfo->ExceptionRecord->ExceptionAddress);
   } else if (code == 0xC0000005 && pExInfo->ContextRecord &&
              (((uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress ==
-               (uint8_t *)GetModuleHandleW(nullptr) + 0x00312A13) ||
+               (uint8_t *)GetModuleHandleW(nullptr) + 0x0033B163) ||
               ((uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress ==
-               (uint8_t *)GetModuleHandleW(nullptr) + 0x0030A6A1))) {
-    // UI screen activation (exe+0x312A00 / exe+0x30A690): `screens[idx]->vfunc()`
-    // where screens[] (exe+0x1782C30) entry was never created because the phase
+               (uint8_t *)GetModuleHandleW(nullptr) + 0x00331BA1))) {
+    // UI screen activation (exe+0x33B150 / exe+0x331B90): `screens[idx]->vfunc()`
+    // where screens[] (exe+0x18138D0) entry was never created because the phase
     // OnEnter that builds it did not run in this port's flow. Skip the virtual call
     // but keep the bookkeeping store that follows it.
     PCONTEXT c = pExInfo->ContextRecord;
     uint8_t *hx = (uint8_t *)GetModuleHandleW(nullptr);
-    bool is312 = ((uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress == hx + 0x00312A13);
+    bool is312 = ((uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress == hx + 0x0033B163);
     static volatile LONG s_skips3 = 0;
     if (InterlockedIncrement(&s_skips3) <= 6)
       log_line("[ui] screen table entry is NULL at exe+0x%X, skipping virtual call\r\n",
-               is312 ? 0x312A13 : 0x30A6A1);
-    c->Rip = (DWORD64)(hx + (is312 ? 0x00312A19 : 0x0030A6A7));
+               is312 ? 0x33B163 : 0x331BA1);
+    c->Rip = (DWORD64)(hx + (is312 ? 0x0033B169 : 0x00331BA7));
     return EXCEPTION_CONTINUE_EXECUTION;
   } else if (code == 0xC0000005 && pExInfo->ContextRecord &&
-             (uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress >= (uint8_t *)GetModuleHandleW(nullptr) + 0xFD770 &&
-             (uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress < (uint8_t *)GetModuleHandleW(nullptr) + 0xFDDA3) {
-    // Render item walk (exe+0xFD6A0) hit an item with garbage data (bad transform/bucket/output
+             (uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress >= (uint8_t *)GetModuleHandleW(nullptr) + 0x105AA0 &&
+             (uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress < (uint8_t *)GetModuleHandleW(nullptr) + 0x1060E0) {
+    // Render item walk (exe+0x1059B0) hit an item with garbage data (bad transform/bucket/output
     // pointer). End the walk for this frame the way the loop ends normally: rsi = end, continue at
-    // the loop-end check (exe+0xFDDA3). rbp is the function's frame pointer here.
+    // the loop-end check (exe+0x1060E0). rbp is the function's frame pointer here.
     PCONTEXT c = pExInfo->ContextRecord;
     uint8_t *hx = (uint8_t *)GetModuleHandleW(nullptr);
     static volatile LONG s_walkAv = 0;
@@ -12608,18 +12769,18 @@ static LONG WINAPI VectoredCrashHandler(PEXCEPTION_POINTERS pExInfo) {
       log_line("[race] render item walk AV at exe+0x%llX -> walk ended (%ld so far)\r\n",
                (unsigned long long)((uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress - hx), (long)n);
     c->Rsi = *(DWORD64 *)(c->Rbp + 0xC8);
-    c->Rip = (DWORD64)(hx + 0xFDDA3);
+    c->Rip = (DWORD64)(hx + 0x1060E0);
     return EXCEPTION_CONTINUE_EXECUTION;
   } else if (code == 0xC0000005 && pExInfo->ContextRecord &&
              (uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress ==
-                 (uint8_t *)GetModuleHandleW(nullptr) + 0x001493C7) {
-    // exe+0x1493B0 is the main-thread completion of the "Load next top mip" job:
+                 (uint8_t *)GetModuleHandleW(nullptr) + 0x00154397) {
+    // exe+0x154380 is the main-thread completion of the "Load next top mip" job:
     // `dec [current_entry+0x1C]` where current_entry (global) is NULL because the
-    // job (exe+0x14E890) found nothing to load and returned early. Same fix: return.
+    // job (exe+0x15A920) found nothing to load and returned early. Same fix: return.
     PCONTEXT c = pExInfo->ContextRecord;
     static volatile LONG s_skips2 = 0;
     if (InterlockedIncrement(&s_skips2) <= 3)
-      log_line("[job] exe+0x1493B0: no current mip entry, skipping completion (emulated return)\r\n");
+      log_line("[job] exe+0x154380: no current mip entry, skipping completion (emulated return)\r\n");
     uint64_t *sp = (uint64_t *)c->Rsp;
     c->Rip = sp[5];       // frame: sub rsp,0x28 -> ret addr at rsp+0x28
     c->Rsp += 0x30;
@@ -12628,16 +12789,16 @@ static LONG WINAPI VectoredCrashHandler(PEXCEPTION_POINTERS pExInfo) {
   } else if (code == 0xC0000005 &&
              pExInfo->ContextRecord &&
              (uint8_t *)pExInfo->ExceptionRecord->ExceptionAddress ==
-                 (uint8_t *)GetModuleHandleW(nullptr) + 0x0014E8CC) {
-    // exe+0x14E890 is a worker-thread job that picks the highest-priority entry
-    // of a list in [exe+0x15C6D88]; the list is empty here (a registration that
+                 (uint8_t *)GetModuleHandleW(nullptr) + 0x0015A95C) {
+    // exe+0x15A920 is a worker-thread job that picks the highest-priority entry
+    // of a list in [exe+0x157E870]; the list is empty here (a registration that
     // the Durango build does at startup is missing), so entry==NULL is
     // dereferenced. Emulate the job returning early: restore RBX (pushed at
     // [rsp+0x20]), pop the return address, drop the 0x30-byte frame.
     PCONTEXT c = pExInfo->ContextRecord;
     static volatile LONG s_skips = 0;
     if (InterlockedIncrement(&s_skips) <= 3)
-      log_line("[job] exe+0x14E890: empty priority list, skipping job (emulated return)\r\n");
+      log_line("[job] exe+0x15A920: empty priority list, skipping job (emulated return)\r\n");
     uint64_t *sp = (uint64_t *)c->Rsp;
     c->Rbx = sp[4];
     c->Rip = sp[5];
@@ -12694,17 +12855,17 @@ static LONG WINAPI VectoredCrashHandler(PEXCEPTION_POINTERS pExInfo) {
         log_line("%s\r\n", bt);
       }
       {
-        // Diagnostic: engine "systems" table (exe+0x16D2130, 22 entries) used by exe+0x247A00.
+        // Diagnostic: engine "systems" table (exe+0x16962E0, 22 entries) used by exe+0x25F5C0.
         HMODULE hx = GetModuleHandleW(nullptr);
         if (hx && (uint8_t *)faultAddr >= (uint8_t *)hx &&
-            (uint8_t *)faultAddr < (uint8_t *)hx + 0x1900000) {
+            (uint8_t *)faultAddr < (uint8_t *)hx + 0x1A0F000) {
           __try {
-            void **t = (void **)((uint8_t *)hx + 0x016D2130);
+            void **t = (void **)((uint8_t *)hx + 0x016962E0);
             char tb[600]; int o = _snprintf_s(tb, sizeof(tb), _TRUNCATE, "  [systems]");
             for (int i = 0; i < 22; ++i)
               o += _snprintf_s(tb + o, sizeof(tb) - o, _TRUNCATE, " %d:%p", i, t[i]);
             log_line("%s\r\n", tb);
-            void **sc = (void **)((uint8_t *)hx + 0x01782C30);
+            void **sc = (void **)((uint8_t *)hx + 0x018138D0);
             int o2 = _snprintf_s(tb, sizeof(tb), _TRUNCATE, "  [screens]");
             for (int i = 0; i < 8; ++i) o2 += _snprintf_s(tb + o2, sizeof(tb) - o2, _TRUNCATE, " %d:%p", i, sc[i]);
             log_line("%s\r\n", tb);

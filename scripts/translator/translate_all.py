@@ -15,6 +15,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 
+# Bump TRANSLATOR_REV when a translator fix changes shaders that players already have translated, and list
+# the kinds to redo for that revision ('vs', 'ps', 'cs', 'tess').
+# 2: VS inputs typed from the signature (uint BLENDINDICES); unread VS attributes take no VGPRs (skinned
+#    depth prepass/shadow VS -> invisible drivers); precise SV_Position.
+# 3: descriptor/constant tracking restarts from the branch state on `else` sides and jump-only labels (TAA, volumetric
+#    fog and bindless material PS: 10 refused shaders now translate, 18 read runtime values as 0); root UAV/SRV buffers;
+#    f64 ops. A revision bump also retries the shaders listed in failed.txt.
+# 4: s_buffer_load_dwordxN whose offset register is one of its own destinations read the later dwords at the new
+#    value (material sampler index = garbage -> character faces black, wrong tree textures).
+TRANSLATOR_REV = 4
+RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs')}
+
+
 def say(*a):
     print(*a, flush=True)
 
@@ -56,6 +69,21 @@ def main(argv):
         lines = open(failed_path).read().split()
         if lines[:2] == ['#version', version]: failed = set(lines[2:])
 
+    # Translator revision: when a fix changes the output for shaders already translated, the kinds listed for
+    # the new revisions are translated again; only shaders whose HLSL changed are rewritten (and recompiled).
+    rev_path = os.path.join(tr, 'translator_rev.txt')
+    try: old_rev = int(open(rev_path).read().split()[0])
+    except Exception: old_rev = 1
+    redo = sorted({k for r, ks in RETRANSLATE.items() if old_rev < r <= TRANSLATOR_REV for k in ks})
+    if redo: failed = set()   # a translator fix may make them work: try them again
+    if redo and not cancelled():
+        for k in [k for k in redo if k != 'tess']:
+            rs, rf, _ = B.build(shaders, skip_existing=False, skip=failed, progress=lambda d, t: say('PROGRESS 1 %d %d' % (d, t)), cancelled=cancelled,
+                                pattern='pso_h*_%s.dxbc' % k, changed_only=True)
+            say('retranslate %s (rev %d -> %d): %s' % (k, old_rev, TRANSLATOR_REV, dict(rs)))
+        if 'tess' in redo:
+            tok, tfail = tess_bypass.run(game, skip_existing=False, log=lambda m: None, cancelled=cancelled, changed_only=True)
+            say('retranslate tess: ok=%d fail=%d' % (tok, tfail))
     stat, new_failed, reasons = B.build(shaders, skip_existing=True, skip=failed, progress=lambda d, t: say('PROGRESS 1 %d %d' % (d, t)), cancelled=cancelled,
                                      pattern='pso_h*_*.dxbc')  # current bridge naming (older dev dumps are ignored)
     new_ok = sum(n for k, n in stat.items() if k.endswith(' ok'))
@@ -74,6 +102,7 @@ def main(argv):
         c2, _ = compile_cso.run(tr, progress=lambda d, t: say('PROGRESS 4 %d %d' % (d, t)), log=lambda m: None, cancelled=cancelled, optimize=True)
         say('optimize: %s' % dict(c2))
         if cancelled(): os.remove(flag); say('CANCELLED'); return 1
+    if not cancelled(): open(rev_path, 'w').write('%d\n' % TRANSLATOR_REV)
     say('time %.1f s' % (time.time() - t0))
     say('DONE %d %d' % (new_ok - len(removed), len(new_failed) + len(removed)))
     return 0

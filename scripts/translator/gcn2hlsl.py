@@ -250,7 +250,7 @@ class Tr:
                       or (self.kind in ('vs', 'ps') and not os.environ.get('NO_GFX_SCALAR_IF')))
         blk = []   # stack of [end pc, index of the `if` line in self.body, [indices of `} else {` lines]]
         def close_block():
-            end, at, elses = blk.pop()
+            end, at, elses = blk.pop()[:3]
             if any('GroupMemoryBarrier' in L for L in self.body[at:]):
                 # a group barrier must not sit in (possibly) varying flow control: fall back to predication for this block
                 self.body[at] = '// ' + self.body[at] + ' (unstructured: barrier inside)'
@@ -301,8 +301,18 @@ class Tr:
             end, at = gates.pop()
             if any('GroupMemoryBarrier' in L for L in self.body[at:]): self.body[at] = '// ' + self.body[at] + ' (gate dropped: barrier inside)'
             else: self.emit("}")
+        # Descriptor tracking and compile-time constants at labels reached only by a jump (the previous instruction is s_branch/s_endpgm): start from
+        # the state at the branch that jumps there, not from the end of the code above it (that code may reuse the
+        # SGPRs holding a T#/S# or a table pointer for something else). NO_LABEL_DESC=1 = old behaviour.
+        fwd_snap = {}; label_desc = not os.environ.get('NO_LABEL_DESC')
         for k, (pc, op, args) in enumerate(ins):
             P = int(pc, 16)
+            if label_desc:
+                if P in fwd_snap and k > 0 and ins[k - 1][1] in ('s_branch', 's_endpgm'):
+                    self.sg, self.origin, self.sym, self.cval = (dict(x) for x in fwd_snap[P])
+                if op.startswith('s_cbranch'):
+                    T_ = tgt(args)
+                    if T_ is not None and T_ > P: fwd_snap[T_] = (dict(self.sg), dict(self.origin), dict(self.sym), dict(self.cval))
             while gates and gates[-1][0] == P:
                 close_gate()
             while blk and blk[-1][0] == P:
@@ -342,11 +352,17 @@ class Tr:
                     if last is None or re.search(r'\bex\b|\bvcc\b|\bsp_\d+|\bv\d+\b', last): uniform = False
                 if uniform and T is not None and T > P and (not blk or T <= blk[-1][0]):
                     cond = {'s_cbranch_scc0': 'scc != 0u', 's_cbranch_scc1': 'scc == 0u', 's_cbranch_vccz': 'vcc', 's_cbranch_vccnz': '!vcc'}[op]
-                    self.emit(f"[branch] if ({cond}) {{   // {op} {args}"); blk.append([T, len(self.body) - 1, []]); continue
+                    self.emit(f"[branch] if ({cond}) {{   // {op} {args}"); blk.append([T, len(self.body) - 1, [], (dict(self.sym), dict(self.cval), dict(self.sg), dict(self.origin))]); continue
             if structured and op == 's_branch' and blk:
                 T = tgt(args); nxt = int(ins[k + 1][0], 16) if k + 1 < len(ins) else None
                 if T is not None and nxt is not None and nxt == blk[-1][0] and T >= nxt and (len(blk) < 2 or T <= blk[-2][0]):
-                    self.emit("} else {"); blk[-1][0] = T; blk[-1][2].append(len(self.body) - 1); continue
+                    self.emit("} else {"); blk[-1][0] = T; blk[-1][2].append(len(self.body) - 1)
+                    # the else side starts from the state at the branch, not from the end of the `then` side: restore the
+                    # compile-time constants/symbolic offsets/descriptor tracking (a `then` that reused s2 for a float constant turned the
+                    # else side's dynamic descriptor offset into a huge static one). NO_ELSE_SYM=1 = old behaviour.
+                    if len(blk[-1]) > 3 and not os.environ.get('NO_ELSE_SYM'):
+                        self.sym, self.cval, self.sg, self.origin = (dict(x) for x in blk[-1][3])
+                    continue
             if egate_on and not structured:
                 if op in ('s_cbranch_scc0', 's_cbranch_scc1'):
                     T = tgt(args)
@@ -375,7 +391,18 @@ class Tr:
                     self.todo.append((pc, f"{op} {args}  !! {type(ex).__name__}: {ex}"))
         while gates: close_gate()
         while blk: close_block()
-        return self.assemble()
+        smpc = {x[1] for x in self.decl if isinstance(x, tuple) and x[0] == 'SC'}
+        reps = []
+        for key, sn_, orig, alt in getattr(self, 'samp_alt', []):
+            rep = orig
+            if sn_ in smpc:
+                if alt is None or alt[0] in smpc: raise ValueError(f"sampler {sn_} used with and without compare, no plain fallback")
+                rep = f"{alt[0]}[{alt[1]}]"; self.decl.discard(('S', sn_))
+            reps.append((key, rep))
+        res = self.assemble()
+        txt = res[0] if isinstance(res, tuple) else res
+        for key, rep in reps: txt = txt.replace(key, rep)
+        return (txt,) + tuple(res[1:]) if isinstance(res, tuple) else txt
 
     def split_args(self, args):
         out = []; depth = 0; cur = ''
@@ -453,6 +480,9 @@ class Tr:
                     if (n_ - 1) in er and (d - 1) in er and er[d - 1] is er[n_ - 1]: return     # hi half of an embedded base copy
                     if n_ in er:
                         self.setu(d, self.src(sv, 'u')); self.embed_regs[d] = er[n_]; return
+                # d no longer holds an embedded-table base (1.80 CS reuse s[16:19] for a UAV counter V# built from
+                # the counter pointer at UAV descriptor +16; the stale entry made that atomic "embedded")
+                if d in er and not os.environ.get('OLD_EMBED_KEEP'): er.pop(d, None)
                 if op == 's_movk_i32': self.setu(d, f"{int(sv) & 0xFFFFFFFF}u"); self.cval[d] = int(sv) & 0xFFFFFFFF; self.sym[d] = (int(sv) & 0xFFFFFFFF, None, 1)
                 elif re.fullmatch(r's\d+', sv) and self.sg.get(int(sv[1:]), ('u',))[0] == 'desc':
                     self.sg[d] = self.sg[int(sv[1:])]
@@ -602,6 +632,12 @@ class Tr:
             if base is not None and base[0] == 'desc': bname = base[2] + '_' + str(base[3]); bkind = base[1]
             else: bname = f"ud{self.origin.get(b0, b0)}"; bkind = 'UD'
             if op.startswith('s_buffer') and dynx is not None: static = None     # dynamic SGPR offset: use the runtime value
+            if (op.startswith('s_buffer') and static is None and not off.startswith(('lit:', '0x')) and n > 1
+                    and d0 <= int(off[1:]) < d0 + n - 1 and os.environ.get('NO_SELF_OFF') is None):
+                # the offset register is one of the destinations (s_buffer_load_dwordx2 s[4:5], .., s4): the dwords
+                # after it must still be read at the OLD offset. Freeze it first. NO_SELF_OFF=1 = old behaviour.
+                so_ = self.t(); self.emit(f"{so_} = {boff};"); boff = f"({so_})"
+                self.fn_uints = getattr(self, 'fn_uints', []); self.fn_uints.append(so_)
             if op.startswith('s_buffer'):
                 if b0 in getattr(self, 'embed_regs', {}):
                     ename, est = self.emb_array(b0)
@@ -724,6 +760,16 @@ class Tr:
             lz = op.endswith('_lz') or op.endswith('_l'); c = op.endswith('_c') or '_c_' in op
             use_cmp = c and op.startswith('image_sample') and not os.environ.get('NO_SAMPLE_CMP')
             if sn is not None: self.decl.add(('SC' if use_cmp else 'S', sn))
+            if sn is not None and not use_cmp and not os.environ.get('NO_SAMP_ALT'):
+                # GCN ignores a sampler's compare function on non-compare ops, so the game may reuse the shadow
+                # (comparison) sampler SGPRs for a plain sample; HLSL cannot. Remember the last plain sampler these
+                # SGPRs held; assemble() swaps it in when sn also ends up declared as SamplerComparisonState.
+                self.samp_alt = getattr(self, 'samp_alt', []); self.samp_last = getattr(self, 'samp_last', {})
+                alt = self.samp_last.get(int(ss)); key = f"@@SALT{len(self.samp_alt)}@@"
+                self.samp_alt.append((key, sn, f"{sn}[{sidx}]", alt)); self.samp_last[int(ss)] = (sn, sidx)
+                sexpr = key
+            else:
+                sexpr = f"{sn}[{sidx}]" if sn is not None else None
             nco = {3: 2, 8: 3, 5: 3, 10: 3}.get(tdim, 2)
             def CO(st):
                 if tdim == 10:   # cube array: GCN passes (u, v, slice*8 + face)
@@ -738,7 +784,7 @@ class Tr:
             if op.startswith('image_gather4'):
                 comp = {1: 'Red', 2: 'Green', 4: 'Blue', 8: 'Alpha'}.get(dm)
                 if comp is None: raise ValueError("gather4 with multi-channel dmask")
-                self.emit(f"float4 {tmp} = {tn}[{ti}].Gather{comp}({sn}[{sidx}], {CO(va)});")
+                self.emit(f"float4 {tmp} = {tn}[{ti}].Gather{comp}({sexpr}, {CO(va)});")
                 for q in range(4): self.setv(vd0 + q, f"{tmp}.{'xyzw'[q]}")
                 return
             if op.startswith('image_load'):
@@ -748,11 +794,11 @@ class Tr:
                 call = f"float4({tn}[{ti}].SampleCmpLevelZero({sn}[{sidx}], {CO(va + 1)}, asfloat(v{va})), 0, 0, 0)"
             elif c:
                 call = f"float4((asfloat(v{va}) <= {tn}[{ti}].SampleLevel({sn}[{sidx}], {CO(va + 1)}, 0).x) ? 1.0 : 0.0, 0, 0, 0)"
-            elif op == 'image_sample_lz': call = f"{tn}[{ti}].SampleLevel({sn}[{sidx}], {CO(va)}, 0)"
-            elif op == 'image_sample_l': call = f"{tn}[{ti}].SampleLevel({sn}[{sidx}], {CO(va)}, asfloat(v{va + nco}))"
-            elif op == 'image_sample_b' and LOD0: call = f"{tn}[{ti}].SampleLevel({sn}[{sidx}], {CO(va + 1)}, 0)"
-            elif op == 'image_sample_b': call = f"{tn}[{ti}].SampleBias({sn}[{sidx}], {CO(va + 1)}, asfloat(v{va}))"
-            elif op == 'image_sample': call = (f"{tn}[{ti}].SampleLevel({sn}[{sidx}], {CO(va)}, 0)" if LOD0 else f"{tn}[{ti}].Sample({sn}[{sidx}], {CO(va)})")
+            elif op == 'image_sample_lz': call = f"{tn}[{ti}].SampleLevel({sexpr}, {CO(va)}, 0)"
+            elif op == 'image_sample_l': call = f"{tn}[{ti}].SampleLevel({sexpr}, {CO(va)}, asfloat(v{va + nco}))"
+            elif op == 'image_sample_b' and LOD0: call = f"{tn}[{ti}].SampleLevel({sexpr}, {CO(va + 1)}, 0)"
+            elif op == 'image_sample_b': call = f"{tn}[{ti}].SampleBias({sexpr}, {CO(va + 1)}, asfloat(v{va}))"
+            elif op == 'image_sample': call = (f"{tn}[{ti}].SampleLevel({sexpr}, {CO(va)}, 0)" if LOD0 else f"{tn}[{ti}].Sample({sexpr}, {CO(va)})")
             else: raise ValueError("unsupported sample variant " + op)
             self.emit(f"float4 {tmp} = {call};")
             k = 0
@@ -950,6 +996,32 @@ class Tr:
             ty = 'i' if name.endswith('i32') else 'u'; fn = 'min' if 'min' in name else 'max'
             cv = (lambda x: f"asuint({fn}({self.src(A[1], 'i')}, {self.src(A[2], 'i')}))") if ty == 'i' else (lambda x: f"{fn}({U(A[1])}, {U(A[2])})")
             self.setv(vd(), f"asfloat({cv(0)})"); return
+        if name in ('v_cvt_f64_f32', 'v_add_f64', 'v_mul_f64', 'v_max_f64', 'v_min_f64', 'v_cvt_f32_f64') and not os.environ.get('NO_F64'):
+            # 64-bit float ops (a register pair holds the double); seen in a one-off lookup-table compute shader
+            raw = args.strip(); clamp_ = raw.endswith(' clamp')
+            if clamp_: raw = raw[:-6]
+            ops = [x.strip() for x in raw.split(',')]
+            def D(t):
+                ng = t.startswith('-'); t = t[1:] if ng else t
+                ab_ = t.startswith('|') and t.endswith('|'); t = t[1:-1] if ab_ else t
+                mv = re.fullmatch(r'([vs])(\d+)', t)
+                if mv:
+                    r_ = int(mv.group(2))
+                    e = (f"asdouble(v{r_}, v{r_ + 1})" if mv.group(1) == 'v' else f"asdouble({self.sraw(r_)}, {self.sraw(r_ + 1)})")
+                elif re.fullmatch(r'-?\d+(\.\d+)?', t): e = f"((double){t})"
+                else: raise ValueError("f64 operand " + t)
+                if ab_: e = f"abs({e})"
+                return f"(-{e})" if ng else e
+            d_ = int(re.fullmatch(r'v(\d+)', ops[0]).group(1))
+            if name == 'v_cvt_f32_f64':
+                self.setv(d_, f"(float)({D(ops[1])})"); return
+            e = {'v_cvt_f64_f32': lambda: f"(double)({F(ops[1])})", 'v_add_f64': lambda: f"({D(ops[1])} + {D(ops[2])})",
+                 'v_mul_f64': lambda: f"({D(ops[1])} * {D(ops[2])})", 'v_max_f64': lambda: f"max({D(ops[1])}, {D(ops[2])})",
+                 'v_min_f64': lambda: f"min({D(ops[1])}, {D(ops[2])})"}[name]()
+            if clamp_: e = f"saturate({e})"
+            dt, lo_, hi_ = self.t(), self.t(), self.t()
+            self.emit(f"double {dt} = {e}; uint {lo_}, {hi_}; asuint({dt}, {lo_}, {hi_});")
+            self.setv(d_, f"asfloat({lo_})"); self.setv(d_ + 1, f"asfloat({hi_})"); return
         if name == 'v_cvt_f32_i32': self.setv(vd(), f"(float)({I(A[1])})"); return
         if name == 'v_cvt_f32_u32': self.setv(vd(), f"(float)({U(A[1])})"); return
         # GCN saturates out-of-range values and maps NaN to 0; a bare HLSL cast is undefined there
@@ -1049,7 +1121,7 @@ class Tr:
             # linear translation lost the descriptor on another control-flow path: use the last descriptor loaded here
             pidx_ = self.pmap.get(self.origin.get(b0, b0)) if self.pmap else None
             P_ = [p for p in self.rs_params if p['i'] == pidx_] if pidx_ is not None else []
-            if not (P_ and P_[0]['type'] == 'CBV'): base = self.sg_hist[b0]
+            if not (P_ and P_[0]['type'] in (('CBV',) if os.environ.get('NO_ROOT_UAV') else ('CBV', 'UAV', 'SRV'))): base = self.sg_hist[b0]
         if base is None or base[0] != 'desc':
             ud = self.origin.get(b0, b0)
             if self.pmap is None:
@@ -1058,6 +1130,15 @@ class Tr:
             P = [p for p in self.rs_params if p['i'] == pidx]
             if P and P[0]['type'] == 'CBV':
                 nm = f"RootCBV_b{P[0]['reg']}_sp{P[0]['space']}"; self.bufs[nm] = ('CBV', P[0]['reg'], P[0]['space']); return 'cb', nm, 0
+            if P and P[0]['type'] in ('UAV', 'SRV') and not os.environ.get('NO_ROOT_UAV'):
+                # root UAV/SRV (a raw GPU address in user data; the shader builds the rest of the V# itself)
+                reg, space = P[0]['reg'], P[0]['space']; dk = self.decls.get((space, reg))
+                if P[0]['type'] == 'UAV' and dk and dk[0] == 'USB':
+                    nm = f"SB_u{reg}_sp{space}"; self.bufs[nm] = ('USB', reg, space, dk[1]); return 'sb', nm, dk[1]
+                if P[0]['type'] == 'SRV' and dk and dk[0] == 'SB':
+                    nm = f"SB_t{reg}_sp{space}"; self.bufs[nm] = ('SB', reg, space, dk[1]); return 'sb', nm, dk[1]
+                if P[0]['type'] == 'UAV': nm = f"BA_u{reg}_sp{space}"; self.bufs[nm] = ('UAV', reg, space); return 'ba', nm, 0
+                nm = f"BA_t{reg}_sp{space}"; self.bufs[nm] = ('SRV', reg, space); return 'ba', nm, 0
             raise ValueError(f"buffer base s{b0} (user data {ud}) not a root CBV")
         if len(base) < 6: raise ValueError("descriptor from pointer chase")
         ud, static = base[4], base[5]
@@ -1373,7 +1454,7 @@ class Tr:
             self.vs_attrs = []
             for e in self.ins:
                 if e['sv'] == 0:
-                    nc = bin(e['mask']).count('1'); ty = 'float' + (str(nc) if nc > 1 else '')
+                    nc = bin(e['mask']).count('1'); ty = _sig_ty(e, nc) if not os.environ.get('NO_INT_VSIN') else 'float' + (str(nc) if nc > 1 else '')
                     params.append(f"{ty} in_{e['name']}{e['idx']} : {e['name']}{e['idx']}"); self.vs_attrs.append((e, nc))
             if any(e['name'] == 'SV_InstanceID' for e in self.ins): params.insert(1, "uint iid : SV_InstanceID")
             h.append("VSOut main(" + ", ".join(params) + ") {")
@@ -1421,9 +1502,15 @@ class Tr:
             # the Xbox fetch shader gives every vertex attribute 4 VGPRs (v4 + 4*i), whatever its width
             # (checked against all dumped multi-attribute VS); NO_ALIGNED_VS_IN=1 = old packed layout
             packed_in = bool(os.environ.get('NO_ALIGNED_VS_IN'))
-            vreg = 4
+            # attributes the shader never reads (signature rw mask 0) are not fetched and take no VGPRs
+            # (skinned depth-prepass VS: POSITION v4, BLENDWEIGHTS v8, BLENDINDICES v12 with NORMAL/TANGENT/
+            # TEXCOORD unused); OLD_UNUSED_SLOTS=1 = old layout that gave every declared attribute a slot
+            keep_unused = bool(os.environ.get('OLD_UNUSED_SLOTS'))
+            vreg = 4; slot = 0
             for ai, (e, nc) in enumerate(self.vs_attrs):
-                if not packed_in: vreg = 4 + 4 * ai
+                if not keep_unused and e.get('rw', 1) == 0: continue
+                if not packed_in: vreg = 4 + 4 * slot
+                slot += 1
                 for c in range(nc):
                     h.append(f"  v{vreg} = asuint(in_{e['name']}{e['idx']}{'' if nc == 1 else '.' + 'xyzw'[c]});"); vreg += 1
         if sg_decl:
@@ -1455,7 +1542,11 @@ class Tr:
         if jks: h.append("  bool " + ", ".join(f"{m} = false" for m in jks) + ";")
         wls = sorted(set(re.findall(r'\bwl_\d+_\d+\b', "\n".join(self.body))))   # v_writelane spill slots
         if wls: h.append("  uint " + ", ".join(f"{m} = 0" for m in wls) + ";")
-        for e in sorted(set(self.exps)): h.append(f"  float4 {e}_o = 0;")
+        for e in sorted(set(self.exps)):
+            # 'precise' position: depth-EQUAL passes pair a position-only prepass VS with the full G-buffer VS;
+            # without it the driver may fuse/reorder their math differently -> 1 ULP depth mismatch (black trees).
+            pr = 'precise ' if e == 'pos0' and self.kind != 'ps' and not os.environ.get('NO_PRECISE_POS') else ''
+            h.append(f"  {pr}float4 {e}_o = 0;")
         if self.kind == 'vs':
             for e in self.outs:
                 if e['sv'] == 0 and f"param{self._preg(e)}" not in self.exps: h.append(f"  float4 param{self._preg(e)}_o = 0;")

@@ -22,6 +22,8 @@
 #include <stdbool.h>
 #include <intrin.h>
 #include <vector>
+#include <string>
+#include <algorithm>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -54,18 +56,18 @@
 #define WM_GAME_STARTED     (WM_USER + 102)
 #define WM_GAME_EXITED      (WM_USER + 103)
 
-// Dark Theme Colors
-#define COLOR_BG_MAIN       RGB(20, 22, 26)
-#define COLOR_BG_CARD       RGB(28, 32, 38)
-#define COLOR_BG_INPUT      RGB(18, 20, 24)
-#define COLOR_BG_LOG        RGB(12, 13, 16)
-#define COLOR_BORDER        RGB(48, 54, 64)
-#define COLOR_ACCENT_ORANGE RGB(255, 75, 20)
-#define COLOR_ACCENT_GREEN  RGB(0, 220, 110)
-#define COLOR_ACCENT_RED    RGB(235, 55, 55)
-#define COLOR_TEXT_PRIMARY  RGB(240, 243, 246)
-#define COLOR_TEXT_MUTED    RGB(150, 158, 170)
-#define COLOR_LOG_TEXT      RGB(70, 210, 160)
+// Dark warm theme — inspired by the ONRUSH launcher reference.
+#define COLOR_BG_MAIN       RGB(18, 14, 11)
+#define COLOR_BG_CARD       RGB(43, 30, 22)
+#define COLOR_BG_INPUT      RGB(30, 22, 17)
+#define COLOR_BG_LOG        RGB(15, 12, 10)
+#define COLOR_BORDER        RGB(76, 55, 41)
+#define COLOR_ACCENT_ORANGE RGB(226, 132, 67)
+#define COLOR_ACCENT_GREEN  RGB(145, 195, 133)
+#define COLOR_ACCENT_RED    RGB(220, 86, 62)
+#define COLOR_TEXT_PRIMARY  RGB(244, 232, 215)
+#define COLOR_TEXT_MUTED    RGB(181, 160, 139)
+#define COLOR_LOG_TEXT      RGB(166, 205, 145)
 
 // Configuration structure
 struct LauncherConfig
@@ -81,7 +83,6 @@ struct LauncherConfig
     int d3d12Debug;
     int autoRestart;
     int skipIntro;       // skip the legal-screen minimum time and the Codemasters/intro video (boots to the title)
-    int quickGameplay;   // -gameplay: auto-skip intro/title/EULA straight into gameplay (testing)
     wchar_t uiLang[8];     // launcher language: pt, en, es
     wchar_t textLang[16];  // game text language (locale, e.g. pt-BR); empty = system
     wchar_t voiceLang[16]; // game voice language (locale); empty = same as text
@@ -142,7 +143,6 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->verboseLog = 0;  // debug mode: full logs + frame captures (ini key DebugMode)
     cfg->d3d12Debug = 0;
     cfg->autoRestart = 0;
-    cfg->quickGameplay = 0;
     cfg->skipIntro = 0;
     wcscpy_s(cfg->uiLang, 8, L"pt");
     cfg->textLang[0] = L'\0';
@@ -173,7 +173,6 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     cfg->diagnostics = GetPrivateProfileIntW(L"System", L"Diagnostics", cfg->diagnostics, iniPath);
     cfg->verboseLog = GetPrivateProfileIntW(L"System", L"DebugMode", cfg->verboseLog, iniPath);
     cfg->d3d12Debug = GetPrivateProfileIntW(L"Graphics", L"D3D12Debug", cfg->d3d12Debug, iniPath);
-    cfg->quickGameplay = GetPrivateProfileIntW(L"System", L"QuickGameplay", cfg->quickGameplay, iniPath);
     cfg->skipIntro = GetPrivateProfileIntW(L"System", L"SkipIntro", cfg->skipIntro, iniPath);
     cfg->autoRestart = GetPrivateProfileIntW(L"System", L"AutoRestart", cfg->autoRestart, iniPath);
     GetPrivateProfileStringW(L"Language", L"Launcher", cfg->uiLang, cfg->uiLang, 8, iniPath);
@@ -217,8 +216,7 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
 
     swprintf_s(buf, 64, L"%d", cfg->d3d12Debug);
     WritePrivateProfileStringW(L"Graphics", L"D3D12Debug", buf, iniPath);
-    swprintf_s(buf, 64, L"%d", cfg->quickGameplay);
-    WritePrivateProfileStringW(L"System", L"QuickGameplay", buf, iniPath);
+    WritePrivateProfileStringW(L"System", L"QuickGameplay", nullptr, iniPath);  // option removed: drop the old key
     swprintf_s(buf, 64, L"%d", cfg->skipIntro);
     WritePrivateProfileStringW(L"System", L"SkipIntro", buf, iniPath);
     WritePrivateProfileStringW(L"Language", L"Launcher", cfg->uiLang, iniPath);
@@ -404,6 +402,11 @@ struct ModuleRecord
     wchar_t path[MAX_PATH];
 };
 
+// The playlist feature is parked until it is better integrated in the game: no tab, no drag-and-drop and
+// nothing is passed to the game. Set to 0 to bring it back (all the code is still in playlist_ui.inc).
+#define PLAYLIST_HIDDEN   1
+static bool ProfUnlocked(const std::wstring &name);  // profiles_ui.inc
+static bool ProfAllUnlocked(const std::wstring &name);
 static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 {
     LauncherConfig *cfg = (LauncherConfig *)lpParam;
@@ -452,10 +455,10 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     SetEnvironmentVariableW(L"ONRUSH_FRAME_DUMPS", g_debugMode ? L"1" : nullptr);
     SetEnvironmentVariableW(L"ONRUSH_VERBOSE_LOG", g_debugMode ? L"1" : nullptr);
 
-    // Quick test mode (launcher option or "OnRushLauncher.exe -gameplay"): the bridge skips the boot screens.
+    // Quick test mode ("OnRushLauncher.exe -gameplay", developer tests only): the bridge skips the boot screens.
     {
         const wchar_t *cl = GetCommandLineW();
-        bool qg = cfg->quickGameplay || (cl && wcsstr(cl, L"-gameplay"));
+        bool qg = cl && wcsstr(cl, L"-gameplay");
         SetEnvironmentVariableW(L"ONRUSH_GAMEPLAY", qg ? L"1" : nullptr);
         SetEnvironmentVariableW(L"ONRUSH_SKIP_INTRO", cfg->skipIntro ? L"1" : nullptr);
     }
@@ -469,7 +472,7 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     // Own playlist (launcher "Playlist" tab): the bridge plays it and holds the game music at 0.
     {
         wchar_t pl[MAX_PATH] = {}, vol[16];
-        if (cfg->musicEnabled && cfg->musicPlaylist[0])
+        if (!PLAYLIST_HIDDEN && cfg->musicEnabled && cfg->musicPlaylist[0])  // playlist parked: the game keeps its own music
         {
             swprintf_s(pl, MAX_PATH, L"%ls\\playlists\\%ls.m3u8", g_exeDir, cfg->musicPlaylist);
             if (GetFileAttributesW(pl) == INVALID_FILE_ATTRIBUTES) pl[0] = 0;
@@ -516,9 +519,22 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
               cfg->width, cfg->height, cfg->windowMode, cfg->vsync ? L"Ativo" : L"Desativado");
     LogPrintf(L"======================================================================\r\n\r\n");
 
+    // Perfis tab, per profile (runtime switches, the bridge forwards them as launch args; save untouched):
+    //  "Desbloquear tudo": the game's own -giveentitlements (beta / deluxe / pre-order) + -unlockall
+    //      (item, crashtag, class-video and career-event checks answer "unlocked").
+    //  "Desbloquear cosméticos": -giveentitlements + -unlockcosmetics (bridge forces only the item and
+    //      crashtag checks exe+0x3D7180 / 0x3D7360; events stay as saved).
+    wchar_t cmdLine[MAX_PATH + 96];
+    bool unlockAll = ProfAllUnlocked(cfg->playerName);
+    bool unlockCosmetics = !unlockAll && ProfUnlocked(cfg->playerName);
+    swprintf_s(cmdLine, L"\"%ls\"%ls", targetExe,
+               unlockAll ? L" -giveentitlements -unlockall" : unlockCosmetics ? L" -giveentitlements -unlockcosmetics" : L"");
+    LogPrintf(L"[LAUNCHER] Perfil: %ls | desbloqueio: %ls\r\n", cfg->playerName,
+              unlockAll ? L"tudo" : unlockCosmetics ? L"cosméticos" : L"nenhum");
+
     BOOL created = CreateProcessW(
         targetExe,
-        nullptr,
+        cmdLine,
         nullptr,
         nullptr,
         FALSE,

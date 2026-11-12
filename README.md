@@ -1,6 +1,6 @@
 # olauncher — ONRUSH PC Native Port
 
-Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.64980.34)** nativamente no Windows x64 com Direct3D 12.
+Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão final 1.80.100.100)** nativamente no Windows x64 com Direct3D 12.
 
 > **Este repositório não contém nenhum arquivo do jogo.** Nada de executáveis, DLLs do sistema do console, assets, shaders originais ou traduzidos. Para jogar, você precisa da **sua própria cópia** do pacote do jogo. Os shaders traduzidos são gerados na sua máquina a partir dessa cópia.
 
@@ -10,7 +10,7 @@ Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.6498
 
 | Pasta | Conteúdo |
 |---|---|
-| `src/launcher` | `OnRushLauncher.exe`: prepara o jogo a partir da sua cópia, traduz os shaders, configurações, playlist, Discord Rich Presence e **atualização automática** |
+| `src/launcher` | `OnRushLauncher.exe`: prepara o jogo a partir da sua cópia, traduz os shaders, perfis, fotos, configurações, Discord Rich Presence e **atualização automática** |
 | `src/d3d12_x` | Ponte D3D12.X (Xbox) → D3D12 de PC: PSOs, descritores, tradução de shaders, ESRAM, modo foto, música |
 | `src/kernelx`, `src/combase`, `src/EtwPlus`, `src/MMDevAPI` | Substitutos das bibliotecas do sistema do console |
 | `scripts/translator` | Tradutor GCN → HLSL (`gcn2hlsl.py`), bypass de tesselação e compilação dos `.cso`; `translate_all.py` é o ponto de entrada incremental |

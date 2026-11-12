@@ -153,7 +153,7 @@ static bool HandleTraceException(PEXCEPTION_POINTERS pEx) {
       char stk[1600]; int so = 0;  // exe-relative return-address-looking values on the stack
       for (int q = 0; q < 512 && so < 1500; ++q) {
         uint64_t v = 0; __try { v = ((uint64_t *)c->Rsp)[q]; } __except (EXCEPTION_EXECUTE_HANDLER) { break; }
-        if (v > hx + 0x1000 && v < hx + 0xE30000) so += _snprintf_s(stk + so, sizeof(stk) - so, _TRUNCATE, " %llX", (unsigned long long)(v - hx));
+        if (v > hx + 0x1000 && v < hx + 0xE90000) so += _snprintf_s(stk + so, sizeof(stk) - so, _TRUNCATE, " %llX", (unsigned long long)(v - hx));
       }
       stk[so] = 0;
       // ONRUSH_WATCH_FILTER=<hex rva>: only report writes whose stack holds this return address

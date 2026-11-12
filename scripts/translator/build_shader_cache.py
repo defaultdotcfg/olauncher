@@ -23,7 +23,7 @@ def fnv64(b):
     for c in b: h = ((h ^ c) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
     return h
 
-def build(d, skip_existing=False, skip=(), progress=None, cancelled=lambda: False, pattern='pso_*_*.dxbc'):
+def build(d, skip_existing=False, skip=(), progress=None, cancelled=lambda: False, pattern='pso_*_*.dxbc', changed_only=False):
     """Translates the dumps in d. skip_existing: leave hashes that already have a .hlsl; skip: hashes not to try.
     progress(done, total) is called per dump. Returns (Counter of results, set of failed hashes, Counter of reasons)."""
     patches = _patches()
@@ -67,7 +67,11 @@ def build(d, skip_existing=False, skip=(), progress=None, cancelled=lambda: Fals
             stat[kind + ' compile'] += 1; failed.add(hx); reasons[f"{kind}: compile: {msg.splitlines()[0][-80:] if msg else ''}"] += 1; continue
         txt = apply_patches(hx, txt, patches)
         dst = os.path.join(out, hx + '.hlsl')
-        with open(dst + '.tmp', 'w', encoding='utf-8') as fh: fh.write(f"// {os.path.basename(f)} fnv={hx} kind={kind}\n" + txt)
+        body = f"// {os.path.basename(f)} fnv={hx} kind={kind}\n" + txt
+        if changed_only and os.path.exists(dst):  # translator revision bump: keep (and do not recompile) unchanged shaders
+            with open(dst, encoding='utf-8') as fh:
+                if fh.read() == body: stat['unchanged'] += 1; continue
+        with open(dst + '.tmp', 'w', encoding='utf-8') as fh: fh.write(body)
         os.replace(dst + '.tmp', dst)
         stat[kind + ' ok'] += 1
     os.environ.pop('STUB_IMAGE', None)

@@ -119,7 +119,10 @@ static HRESULT STDMETHODCALLTYPE BridgeCmdList_QueryInterface(BridgeCommandList*
         riid == __uuidof(ID3D12Object) ||
         riid == __uuidof(ID3D12DeviceChild) ||
         riid == __uuidof(ID3D12CommandList) ||
-        riid == __uuidof(ID3D12GraphicsCommandList))
+        riid == __uuidof(ID3D12GraphicsCommandList) ||
+        // 1.80 asks for GraphicsCommandList1 when creating its lists (exe+0xAA31A); the Durango
+        // layout of our vtable already covers what the game calls on it.
+        riid == __uuidof(ID3D12GraphicsCommandList1))
     {
         BridgeCmdList_AddRef(self);
         *ppvObject = self;
@@ -184,7 +187,22 @@ static void FindDescIn(const UINT64* tabs, const char* where);
 // bound graphics descriptor table (see DbgPsoDraw).
 static void* volatile g_dbgPso[8] = {};
 static volatile LONG g_dbgPsoN = 0;
+static thread_local UINT t_rc0[8] = {};
+static uint64_t BcPsoHash(void* pso); static uint64_t BcVsHash(void* pso);
 static void DbgPsoDraw(const char* kind, UINT cnt, UINT inst) {
+    // ONRUSH_LOG_DRAWCNT=n1,n2,...: log VS/PS/depth state of every draw with one of these vertex/index counts
+    // (from ONRUSH_PSHASH_FRAME on, 64 lines): finds the depth prepass that pairs with a G-buffer draw.
+    { static UINT s_dc[8] = {}; static int s_dcN = -1;
+      if (s_dcN < 0) { char b[96] = {}; s_dcN = 0; if (GetEnvironmentVariableA("ONRUSH_LOG_DRAWCNT", b, sizeof(b)) > 0) for (char* q = b; *q && s_dcN < 8; ) { s_dc[s_dcN++] = (UINT)strtoul(q, &q, 10); while (*q == ',') ++q; } }
+      if (s_dcN > 0 && t_lastPso) {
+        bool m = false; for (int k = 0; k < s_dcN; ++k) m |= s_dc[k] == cnt;
+        extern volatile LONG g_rtLogFrame; static long s_fr = -2;
+        if (s_fr == -2) { char fb[16] = {}; s_fr = GetEnvironmentVariableA("ONRUSH_PSHASH_FRAME", fb, sizeof(fb)) > 0 ? atol(fb) : -1; }
+        static volatile LONG s_dn = 0;
+        if (m && (s_fr < 0 || g_rtLogFrame >= s_fr) && InterlockedIncrement(&s_dn) <= 64)
+          log_line("[drawcnt] fr=%ld %s cnt=%u inst=%u pso=%p vs=%016llx ps=%016llx rc0=%08X\r\n", (long)g_rtLogFrame, kind, cnt, inst, t_lastPso,
+                   (unsigned long long)BcVsHash(t_lastPso), (unsigned long long)BcPsoHash(t_lastPso), t_rc0[0]);
+      } }
     if (!g_dbgPsoN || !t_lastPso) return;
     bool hit = false;
     for (LONG k = 0; k < g_dbgPsoN && k < 8; ++k) if (g_dbgPso[k] == t_lastPso) hit = true;
@@ -193,15 +211,20 @@ static void DbgPsoDraw(const char* kind, UINT cnt, UINT inst) {
     { static int s_after = -1; static ULONGLONG s_t0 = 0;
       if (s_after < 0) { char ab[16] = {}; s_after = GetEnvironmentVariableA("ONRUSH_PSHASH_AFTER", ab, sizeof(ab)) > 0 ? atoi(ab) : 0; s_t0 = GetTickCount64(); }
       if (s_after > 0 && GetTickCount64() - s_t0 < (ULONGLONG)s_after * 1000ull) return; }
+    { extern volatile LONG g_rtLogFrame; static long s_fr = -2;  // ONRUSH_PSHASH_FRAME=N: only from frame N on
+      if (s_fr == -2) { char fb[16] = {}; s_fr = GetEnvironmentVariableA("ONRUSH_PSHASH_FRAME", fb, sizeof(fb)) > 0 ? atol(fb) : -1; }
+      if (s_fr >= 0 && g_rtLogFrame < s_fr) return; }
     static volatile LONG s_n = 0;
     LONG n = InterlockedIncrement(&s_n);
-    if (n > 6) return;
-    log_line("[pshash] %s cnt=%u inst=%u pso=%p (#%ld)\r\n", kind, cnt, inst, t_lastPso, n);
-    for (int p = 0; p < 16; ++p)
+    if (n > 12) return;
+    log_line("[pshash] %s cnt=%u inst=%u pso=%p vs=%016llx ps=%016llx rc0=%08X (#%ld)\r\n", kind, cnt, inst, t_lastPso, (unsigned long long)BcVsHash(t_lastPso), (unsigned long long)BcPsoHash(t_lastPso), t_rc0[0], n);
+    static const bool s_tabOnly = GetEnvironmentVariableA("ONRUSH_LOG_PSTAB_ONLY", nullptr, 0) > 0;
+    for (int p = 0; p < 16 && !s_tabOnly; ++p)
         if (t_gtab[p]) { char tg[16]; sprintf_s(tg, "p%d", p); DescTrack_LogTable(tg, (UINT)p, t_gtab[p], 24); }
-    { char ob[16] = {}; int pp = -1, off = 0;  // ONRUSH_LOG_PSTAB=p:off -> 40 more entries of table p from off
-      if (GetEnvironmentVariableA("ONRUSH_LOG_PSTAB", ob, sizeof(ob)) > 0) sscanf_s(ob, "%d:%d", &pp, &off);
-      if (pp >= 0 && pp < 16 && t_gtab[pp]) DescTrack_LogTable("ptab", (UINT)off, t_gtab[pp] + (UINT64)off * 32ull, 40); }
+    { int pp = -1, off = 0;  // ONRUSH_LOG_PSTAB=p:off[,p:off...] -> 12 entries of table p from off
+      char lb[128] = {}; if (GetEnvironmentVariableA("ONRUSH_LOG_PSTAB", lb, sizeof(lb)) > 0) for (char* q = lb; q && *q; ) {
+        if (sscanf_s(q, "%d:%d", &pp, &off) == 2 && pp >= 0 && pp < 16 && t_gtab[pp]) { char tg[16]; sprintf_s(tg, "ptab%d", pp); DescTrack_LogTable(tg, (UINT)off, t_gtab[pp] + (UINT64)off * 32ull, 12); }
+        q = strchr(q, ','); if (q) ++q; } }
 }
 static thread_local void* t_gfxRs = nullptr; static thread_local void* t_csRs = nullptr;
 static volatile LONG g_drawDetailCount = 0;
@@ -210,12 +233,11 @@ static volatile LONG g_drawDetailCount = 0;
 static ID3D12QueryHeap *g_psQueryHeap = nullptr;
 static ID3D12Resource *g_psReadback = nullptr;
 static const UINT kPsMax = 1024;
-struct PsDrawInfo { char kind; UINT count; void *pso; void *rt; void *list; };
+struct PsDrawInfo { char kind; UINT count; void *pso; void *rt; void *list; unsigned long long vs, ps; UINT rc0; };
 static PsDrawInfo g_psInfo[kPsMax];
 static volatile LONG g_psNext = 0;
 
 static thread_local D3D12_GPU_VIRTUAL_ADDRESS t_rootCbv[16] = {};
-static thread_local UINT t_rc0[8] = {};
 static thread_local int t_topo = 0;
 struct OmState { void* list; UINT n; BOOL single; unsigned long long h0, h1, h2, ds; };
 static thread_local OmState t_om = {};
@@ -229,14 +251,20 @@ static void (*g_pfnLogGeom)(UINT drawIdx, const D3D12_INDEX_BUFFER_VIEW* ib, con
 static void (*g_pfnLogRootCbv)(UINT drawIdx, void* pso, const D3D12_GPU_VIRTUAL_ADDRESS* cbv) = nullptr;
 static ID3D12QueryHeap* g_tsHeap = nullptr; static ID3D12Resource* g_tsReadback = nullptr; static volatile LONG g_tsNext = 0;
 struct TsInfo { void* pso; UINT gx, gy, gz; }; static TsInfo g_tsInfo[1024];
+static uint64_t BcPsoHash(void* pso); static uint64_t BcVsHash(void* pso);
 struct PsQueryScope {
     ID3D12GraphicsCommandList *cl = nullptr; LONG idx = -1;
     PsQueryScope(BridgeCommandList *self, char kind, UINT count) {
         if (!g_drawDetail || !g_psQueryHeap || !self || !self->m_pRealCmdList || self->m_type != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
+        // ONRUSH_PSQ_VS=h1,h2,...: only query draws whose VS (or PS) hash is listed (debug: does a draw produce pixels?)
+        static char s_vsf[16384] = {}; static int s_vsfi = 0;
+        if (!s_vsfi) s_vsfi = GetEnvironmentVariableA("ONRUSH_PSQ_VS", s_vsf, sizeof(s_vsf)) > 0 ? 1 : 2;
+        const unsigned long long vsh = BcVsHash(t_lastPso), psh = BcPsoHash(t_lastPso);
+        if (s_vsfi == 1) { char hb[20], hp[20]; sprintf_s(hb, "%016llx", vsh); sprintf_s(hp, "%016llx", psh); if (!strstr(s_vsf, hb) && !strstr(s_vsf, hp)) return; }
         LONG i = InterlockedIncrement(&g_psNext) - 1;
         if (i >= (LONG)kPsMax) return;
         idx = i; cl = self->m_pRealCmdList;
-        g_psInfo[i] = { kind, count, t_lastPso, self->m_pActiveRenderTarget, self };
+        g_psInfo[i] = { kind, count, t_lastPso, self->m_pActiveRenderTarget, self, vsh, psh, t_rc0[0] };
         if (g_pfnLogRootCbv && i < 40) g_pfnLogRootCbv((UINT)i, t_lastPso, t_rootCbv);
         if (g_pfnLogGeom && (i < 40 || kind == 'X') && i < 400) g_pfnLogGeom((UINT)i, &t_ib, t_vb);
         if (g_drawDetail && kind == 'X' && i < 1024) log_line("[om] X#%ld omList=%p thisList=%p n=%u single=%d h0=%llX h1=%llX h2=%llX ds=%llX dsKnown=%d rtvKnown=%d,%d,%d\r\n", (long)i, t_om.list, (void*)self, t_om.n, (int)t_om.single, t_om.h0, t_om.h1, t_om.h2, t_om.ds, (int)LookupDsvKnown((SIZE_T)t_om.ds), (int)(LookupRtvResource((SIZE_T)t_om.h0) != nullptr), (int)(LookupRtvResource((SIZE_T)t_om.h1) != nullptr), (int)(LookupRtvResource((SIZE_T)t_om.h2) != nullptr));
@@ -335,7 +363,17 @@ static inline bool SafeGetResourceDesc(ID3D12Resource* pRes, D3D12_RESOURCE_DESC
 static uint64_t BcPsoHash(void* pso);
 static uint64_t BcVsHash(void* pso);
 // ONRUSH_SKIP_DRAW_PS=h1,h2,...: drop draws whose PS (or VS) hash is listed (debug: find who draws what).
+// PSOs whose PS has no translation (translator refused it): the Xbox bytecode drew garbage on PC
+// (white/black rectangles), so their draws are dropped. ONRUSH_DRAW_UNTRANSLATED=1 = old behaviour.
+static std::unordered_set<void*> g_untrPsPso; static SRWLOCK g_untrPsLk = SRWLOCK_INIT;
+static void MarkPsoUntranslatedPs(void* pso) {
+    static const bool s_keep = GetEnvironmentVariableA("ONRUSH_DRAW_UNTRANSLATED", nullptr, 0) > 0;
+    if (s_keep || !pso) return;
+    AcquireSRWLockExclusive(&g_untrPsLk); g_untrPsPso.insert(pso); ReleaseSRWLockExclusive(&g_untrPsLk);
+    log_line("[xlate] PSO %p: PS not translated -> its draws are skipped\r\n", pso);
+}
 static bool SkipDrawByShader() {
+    if (!g_untrPsPso.empty() && t_lastPso) { AcquireSRWLockShared(&g_untrPsLk); bool u = g_untrPsPso.count(t_lastPso) != 0; ReleaseSRWLockShared(&g_untrPsLk); if (u) return true; }
     static char s_list[16384] = {}; static int s_init = 0;
     if (!s_init) { s_init = GetEnvironmentVariableA("ONRUSH_SKIP_DRAW_PS", s_list, sizeof(s_list)) > 0 ? 1 : 2; }
     if (s_init != 1 || !t_lastPso) return false;
@@ -1396,7 +1434,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_Slot29_XboxStub(
     UINT a2,
     UINT a3)
 {
-    // Durango ID3D12CommandListX fast constant / cache commit stub (slot 29 / 0xE8, game+0xB19EA)
+    // Durango ID3D12CommandListX fast constant / cache commit stub (slot 29 / 0xE8, game+0xB595A)
     // Safely absorbed on desktop D3D12 to prevent root signature corruption and command list invalidation.
     static volatile LONG s_s29Log = 0;
     if (InterlockedIncrement(&s_s29Log) <= 10) {
@@ -1968,7 +2006,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_ExecuteIndirect(
     }
 
     // Bypass calls from gputiming (profiling/timestamp readback) which do not pass standard PC indirect arguments
-    if (rva >= 0xBB000 && rva <= 0xBB300) {
+    if (rva >= 0xBECE8 && rva <= 0xBEFD0) {
         return;
     }
 
@@ -2054,7 +2092,7 @@ inline void InitBridgeCommandListVtables()
         //   - Slots 0..2: QueryInterface, AddRef, Release
         //   - Slot 7: GetDevice
         //   - Slot 8: GetType
-        //   - Slot 9: Close (game+0xA6C0B)
+        //   - Slot 9: Close (game+0xAA33F)
         //   - Slot 10: Reset (telemetria de execução controlada)
         // --------------------------------------------------------------------
         auto InitCommon = [](void** vtbl) {
@@ -2086,11 +2124,11 @@ inline void InitBridgeCommandListVtables()
         // --------------------------------------------------------------------
         // DIRECT Command List Vtable (D3D12_COMMAND_LIST_TYPE_DIRECT = 0)
         // Confirmados por call site ou header/ABI identificado:
-        //   - Slot 12 (+0x60): DrawInstanced (game+0x119012)
-        //   - Slot 14 (+0x70): Dispatch (game+0xB03DC)
+        //   - Slot 12 (+0x60): DrawInstanced (game+0x1213E2)
+        //   - Slot 14 (+0x70): Dispatch (game+0xB40DC)
         //   - Slot 32 (+0x100): SetDescriptorHeaps (game+0xABBF3)
-        //   - Slot 59 (+0x1D8): ExecuteIndirect (game+0xB0475 e d3d12.h)
-        //   - Slot 83 (+0x298): CopyTextureRegion (game+0xABF41, ramo não-COPY)
+        //   - Slot 59 (+0x1D8): ExecuteIndirect (game+0xB4175 e d3d12.h)
+        //   - Slot 83 (+0x298): CopyTextureRegion (game+0xAF971, ramo não-COPY)
         // --------------------------------------------------------------------
         g_BridgeDirectCommandListVtable[11] = (void*)&BridgeCmdList_ClearState;
         g_BridgeDirectCommandListVtable[12] = (void*)&BridgeCmdList_DrawInstanced;
@@ -2119,34 +2157,34 @@ inline void InitBridgeCommandListVtables()
         g_BridgeDirectCommandListVtable[31] = (void*)&BridgeCmdList_Slot29_XboxStub;
 
         // Durango XDK Direct3D 12 Shifted Layout (+4 slots relative to PC D3D12):
-        g_BridgeDirectCommandListVtable[32] = (void*)&BridgeCmdList_SmartSlot32;                       // 0x100: SetDescriptorHeaps (0xABBF3, 0xBC12A, etc.)
+        g_BridgeDirectCommandListVtable[32] = (void*)&BridgeCmdList_SmartSlot32;                       // 0x100: SetDescriptorHeaps (0xABBF3, 0xC069A, etc.)
         g_BridgeDirectCommandListVtable[33] = (void*)&BridgeCmdList_SetComputeRootSignature;            // 0x108: SetComputeRootSignature (0xB597C, 0xB5A3E)
         g_BridgeDirectCommandListVtable[34] = (void*)&BridgeCmdList_SetGraphicsRootSignature;           // 0x110: SetGraphicsRootSignature (0xB5EB0, 0xB5F79)
-        g_BridgeDirectCommandListVtable[35] = (void*)&BridgeCmdList_SetComputeRootDescriptorTable;      // 0x118: SetComputeRootDescriptorTable (0xB58DE)
-        g_BridgeDirectCommandListVtable[36] = (void*)&BridgeCmdList_SetGraphicsRootDescriptorTable;     // 0x120: SetGraphicsRootDescriptorTable (0xB5E0E)
+        g_BridgeDirectCommandListVtable[35] = (void*)&BridgeCmdList_SetComputeRootDescriptorTable;      // 0x118: SetComputeRootDescriptorTable (0xB8FBE)
+        g_BridgeDirectCommandListVtable[36] = (void*)&BridgeCmdList_SetGraphicsRootDescriptorTable;     // 0x120: SetGraphicsRootDescriptorTable (0xB94EE)
         g_BridgeDirectCommandListVtable[37] = (void*)&BridgeCmdList_SetComputeRoot32BitConstant;        // 0x128: SetComputeRoot32BitConstant
         g_BridgeDirectCommandListVtable[38] = (void*)&BridgeCmdList_SetGraphicsRoot32BitConstant;       // 0x130: SetGraphicsRoot32BitConstant
-        g_BridgeDirectCommandListVtable[39] = (void*)&BridgeCmdList_SetComputeRoot32BitConstants;       // 0x138: SetComputeRoot32BitConstants (0xB5C99)
-        g_BridgeDirectCommandListVtable[40] = (void*)&BridgeCmdList_SetGraphicsRoot32BitConstants;      // 0x140: SetGraphicsRoot32BitConstants (0xB61D9)
-        g_BridgeDirectCommandListVtable[41] = (void*)&BridgeCmdList_SetComputeRootConstantBufferView;  // 0x148: SetComputeRootConstantBufferView (0xB5D0D)
-        g_BridgeDirectCommandListVtable[42] = (void*)&BridgeCmdList_SetGraphicsRootConstantBufferView; // 0x150: SetGraphicsRootConstantBufferView (0xB6253)
-        g_BridgeDirectCommandListVtable[43] = (void*)&BridgeCmdList_SetComputeRootShaderResourceView;  // 0x158: SetComputeRootShaderResourceView (0xB5B9B)
-        g_BridgeDirectCommandListVtable[44] = (void*)&BridgeCmdList_SetGraphicsRootShaderResourceView; // 0x160: SetGraphicsRootShaderResourceView (0xB60DD)
-        g_BridgeDirectCommandListVtable[45] = (void*)&BridgeCmdList_SetComputeRootUnorderedAccessView; // 0x168: SetComputeRootUnorderedAccessView (0xB5BD8)
-        g_BridgeDirectCommandListVtable[46] = (void*)&BridgeCmdList_SetGraphicsRootUnorderedAccessView; // 0x170: SetGraphicsRootUnorderedAccessView (0xB611A)
-        g_BridgeDirectCommandListVtable[47] = (void*)&BridgeCmdList_IASetIndexBuffer;                   // 0x178: IASetIndexBuffer (0xB3846)
-        g_BridgeDirectCommandListVtable[48] = (void*)&BridgeCmdList_IASetVertexBuffers;                 // 0x180: IASetVertexBuffers (0xB37F1)
+        g_BridgeDirectCommandListVtable[39] = (void*)&BridgeCmdList_SetComputeRoot32BitConstants;       // 0x138: SetComputeRoot32BitConstants (0xB9379)
+        g_BridgeDirectCommandListVtable[40] = (void*)&BridgeCmdList_SetGraphicsRoot32BitConstants;      // 0x140: SetGraphicsRoot32BitConstants (0xB98B9)
+        g_BridgeDirectCommandListVtable[41] = (void*)&BridgeCmdList_SetComputeRootConstantBufferView;  // 0x148: SetComputeRootConstantBufferView (0xB93ED)
+        g_BridgeDirectCommandListVtable[42] = (void*)&BridgeCmdList_SetGraphicsRootConstantBufferView; // 0x150: SetGraphicsRootConstantBufferView (0xB9933)
+        g_BridgeDirectCommandListVtable[43] = (void*)&BridgeCmdList_SetComputeRootShaderResourceView;  // 0x158: SetComputeRootShaderResourceView (0xB927B)
+        g_BridgeDirectCommandListVtable[44] = (void*)&BridgeCmdList_SetGraphicsRootShaderResourceView; // 0x160: SetGraphicsRootShaderResourceView (0xB97BD)
+        g_BridgeDirectCommandListVtable[45] = (void*)&BridgeCmdList_SetComputeRootUnorderedAccessView; // 0x168: SetComputeRootUnorderedAccessView (0xB92B8)
+        g_BridgeDirectCommandListVtable[46] = (void*)&BridgeCmdList_SetGraphicsRootUnorderedAccessView; // 0x170: SetGraphicsRootUnorderedAccessView (0xB97FA)
+        g_BridgeDirectCommandListVtable[47] = (void*)&BridgeCmdList_IASetIndexBuffer;                   // 0x178: IASetIndexBuffer (0xB6E06)
+        g_BridgeDirectCommandListVtable[48] = (void*)&BridgeCmdList_IASetVertexBuffers;                 // 0x180: IASetVertexBuffers (0xB6DB1)
         g_BridgeDirectCommandListVtable[49] = (void*)&BridgeCmdList_SOSetTargets;                       // 0x188: SOSetTargets
-        g_BridgeDirectCommandListVtable[50] = (void*)&BridgeCmdList_OMSetRenderTargets;                 // 0x190: OMSetRenderTargets (0xB3C07)
+        g_BridgeDirectCommandListVtable[50] = (void*)&BridgeCmdList_OMSetRenderTargets;                 // 0x190: OMSetRenderTargets (0xB7137)
         g_BridgeDirectCommandListVtable[51] = (void*)&BridgeCmdList_ClearDepthStencilView;             // 0x198: ClearDepthStencilView (0xAB780, 0xAB432)
         g_BridgeDirectCommandListVtable[52] = (void*)&BridgeCmdList_ClearRenderTargetView;             // 0x1A0: ClearRenderTargetView (0xAB82F, 0xAB49B)
         g_BridgeDirectCommandListVtable[53] = (void*)&BridgeCmdList_ClearUnorderedAccessViewUint;      // 0x1A8: ClearUnorderedAccessViewUint
         g_BridgeDirectCommandListVtable[54] = (void*)&BridgeCmdList_ClearUnorderedAccessViewFloat;     // 0x1B0: ClearUnorderedAccessViewFloat
         g_BridgeDirectCommandListVtable[55] = (void*)&BridgeCmdList_DiscardResource;                  // 0x1B8: DiscardResource
-        g_BridgeDirectCommandListVtable[59] = (void*)&BridgeCmdList_ExecuteIndirect;                   // 0x1D8: ExecuteIndirect (0xB0475)
+        g_BridgeDirectCommandListVtable[59] = (void*)&BridgeCmdList_ExecuteIndirect;                   // 0x1D8: ExecuteIndirect (0xB4175)
         g_BridgeDirectCommandListVtable[60] = (void*)&BridgeCmdList_ExecuteIndirect;
         g_BridgeDirectCommandListVtable[67] = (void*)&BridgeCmdList_PipelineBarrier;
-        g_BridgeDirectCommandListVtable[83] = (void*)&BridgeCmdList_CopyTextureRegion;                 // 0x298: CopyTextureRegion (0xABF41)
+        g_BridgeDirectCommandListVtable[83] = (void*)&BridgeCmdList_CopyTextureRegion;                 // 0x298: CopyTextureRegion (0xAF971)
         g_BridgeDirectCommandListVtable[84] = (void*)&BridgeCmdList_Slot84_CopyResourceX;          // 0x2A0: Durango CopyResource with flags
 
         // --------------------------------------------------------------------
@@ -2184,7 +2222,7 @@ inline void InitBridgeCommandListVtables()
         g_BridgeComputeCommandListVtable[60] = (void*)&BridgeCmdList_ExecuteIndirect;
         g_BridgeComputeCommandListVtable[67] = (void*)&BridgeCmdList_PipelineBarrier;
         g_BridgeComputeCommandListVtable[83] = (void*)&BridgeCmdList_CopyTextureRegion;
-        // game+0xB6C5A: on any non-copy list the game issues CopyResource(dst, src, flags) through slot 84
+        // game+0xBA2FA: on any non-copy list the game issues CopyResource(dst, src, flags) through slot 84
         // (copy lists use slot 13); it was an unmapped stub on compute lists, so those copies were dropped.
         g_BridgeComputeCommandListVtable[84] = (void*)&BridgeCmdList_Slot84_CopyResourceX;
 
