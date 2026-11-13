@@ -388,7 +388,7 @@ static void DrawHero(HDC hdc)
     {
         const float lw = 184.f, lh = lw * (float)LOGO_H / (float)LOGO_W;
         g.DrawImage(logo, Gdiplus::RectF(16.f, 38.f, lw, lh));
-        g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(24, 38.f + lh + 4.f), &orange);
+        g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(14.f, 38.f + lh + 4.f), &orange);   // left edge of the logo (x=16) minus the glyph side bearing
     }
     else
     {
