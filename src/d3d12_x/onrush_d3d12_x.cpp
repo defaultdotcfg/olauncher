@@ -1040,6 +1040,11 @@ static LRESULT CALLBACK DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wParam,
   case WM_SYSCHAR:
     if (wParam == VK_RETURN) return 0;  // no "ding" on Alt+Enter
     return DefWindowProcW(hwnd, msg, wParam, lParam);
+  case WM_SYSCOMMAND:
+    // Alt or F10 alone (and Alt+Space) open the window menu from the keyboard. DefWindowProc then runs a
+    // modal menu loop on this thread, which also renders the frames: the game froze until Esc or a click.
+    if ((wParam & 0xFFF0) == SC_KEYMENU) return 0;
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
   case WM_ERASEBKGND:
     // Prevent GDI from overwriting Direct3D 12 backbuffers with background brush
     return 1;

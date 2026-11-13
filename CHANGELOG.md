@@ -28,6 +28,7 @@
 - Porte para a versão 1.80.100.100.
 - Corrigido o fechamento do jogo durante o vídeo de introdução quando "pular introdução" está desligado.
 - As opções de inicialização do jogo agora chegam a ele (a ponte repassava os argumentos vazios).
+- Apertar Alt ou F10 sozinho não congela mais o jogo (abria o menu da janela, que travava a imagem até apertar Esc).
 
 ### Gráficos
 - Personagens e pilotos voltam a aparecer (cabine, menus, garagem).
