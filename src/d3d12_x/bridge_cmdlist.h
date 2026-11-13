@@ -262,6 +262,11 @@ static void DrawListLog(const char* kind, UINT cnt, UINT inst) {
               (unsigned long long)BcVsHash(t_lastPso), (unsigned long long)BcPsoHash(t_lastPso), t_lastPso, t_vp0.TopLeftX, t_vp0.TopLeftY, t_vp0.Width, t_vp0.Height,
               t_sc0.left, t_sc0.top, t_sc0.right, t_sc0.bottom);
     log_line("%s", b);
+    // ONRUSH_FIND_SRV3D=WxHxD: which draws sample a 3D texture of that size ([srv3d])
+    static unsigned s_fw = 1, s_fh = 0, s_fd = 0;
+    if (s_fw == 1) { char e[40]; s_fw = 0; if (GetEnvironmentVariableA("ONRUSH_FIND_SRV3D", e, sizeof(e)) > 0) sscanf_s(e, "%ux%ux%u", &s_fw, &s_fh, &s_fd); }
+    if (s_fw && g_drawList) for (UINT p = 0; p < 16; ++p) { if (!t_gtab[p]) continue; UINT sl = 0; ID3D12Resource* r = DescTrack_FindTex3D(t_gtab[p], 64, s_fw, s_fh, s_fd, 1, &sl);
+        if (r) { log_line("[srv3d] ps=%016llx vs=%016llx param=%u slot=%u res=%p cnt=%u inst=%u\r\n", (unsigned long long)BcPsoHash(t_lastPso), (unsigned long long)BcVsHash(t_lastPso), p, sl, (void*)r, cnt, inst); break; } }
 }
 static thread_local D3D12_INDEX_BUFFER_VIEW t_ib = {};
 static thread_local D3D12_VERTEX_BUFFER_VIEW t_vb[4] = {};
@@ -748,6 +753,19 @@ static void STDMETHODCALLTYPE BridgeCmdList_Dispatch(
 {
     CMD_STAT(STAT_DISPATCH);
     if (g_drawList && t_lastPso) { char b[160]; sprintf_s(b, "[dl] dispatch cs=%016llx groups=%u,%u,%u\r\n", (unsigned long long)BcPsoHash(t_lastPso), ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ); log_line("%s", b); }
+    { static const bool s_first = GetEnvironmentVariableA("ONRUSH_LOG_DISP_FIRST", nullptr, 0) > 0;   // first dispatch of each CS (+ frame)
+      if (s_first && t_lastPso) { extern volatile LONG g_rtLogFrame; static UINT64 s_h[2048]; static volatile LONG s_n = 0; UINT64 h = (UINT64)BcPsoHash(t_lastPso); bool seen = false; LONG n_ = s_n; for (LONG q = 0; q < n_ && q < 2048; ++q) if (s_h[q] == h) { seen = true; break; }
+        if (!seen) { LONG id_ = InterlockedIncrement(&s_n) - 1; if (id_ < 2048) { s_h[id_] = h; log_line("[dfirst] f=%ld cs=%016llx groups=%u,%u,%u\r\n", (long)g_rtLogFrame, (unsigned long long)h, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ); } } } }
+    { static char s_lst[512]; static int s_i = -1; if (s_i < 0) { s_i = (int)GetEnvironmentVariableA("ONRUSH_LOG_DISP_FIRST", s_lst, sizeof(s_lst)); if (s_i < 2) s_i = 0; }   // value = hash list: log EVERY dispatch of those CS
+      if (s_i > 1 && t_lastPso) { char hb[20]; sprintf_s(hb, "%016llx", (unsigned long long)BcPsoHash(t_lastPso)); if (strstr(s_lst, hb)) { extern volatile LONG g_rtLogFrame; log_line("[dall] f=%ld cs=%s groups=%u,%u,%u\r\n", (long)g_rtLogFrame, hb, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+          static volatile LONG s_tl = 0; if (g_rtLogFrame > 1000 && InterlockedIncrement(&s_tl) <= 2) for (UINT p = 0; p < 16; ++p) if (t_ctab[p]) DescTrack_LogTable("dall", p, t_ctab[p], 40); } } }
+    { // ONRUSH_FIND_CS_TEX3D=WxHxD[:u]: first dispatch of each CS that has a 3D texture of that size bound as SRV (or UAV with ":u") ([cs3d])
+      static unsigned s_w = 1, s_h = 0, s_d = 0, s_k = 1; static UINT64 s_hh[1024]; static volatile LONG s_nn = 0;
+      if (s_w == 1) { char e[48]; s_w = 0; if (GetEnvironmentVariableA("ONRUSH_FIND_CS_TEX3D", e, sizeof(e)) > 0) { sscanf_s(e, "%ux%ux%u", &s_w, &s_h, &s_d); if (strstr(e, ":u")) s_k = 2; } }
+      if (s_w && t_lastPso) for (UINT p = 0; p < 16; ++p) { if (!t_ctab[p]) continue; UINT sl = 0; ID3D12Resource* r = DescTrack_FindTex3D(t_ctab[p], 64, s_w, s_h, s_d, s_k, &sl); if (!r) continue;
+          UINT64 h = (UINT64)BcPsoHash(t_lastPso); bool seen = false; LONG n_ = s_nn; for (LONG q = 0; q < n_ && q < 1024; ++q) if (s_hh[q] == h) { seen = true; break; }
+          if (!seen) { extern volatile LONG g_rtLogFrame; LONG id_ = InterlockedIncrement(&s_nn) - 1; if (id_ < 1024) { s_hh[id_] = h; log_line("[cs3d] f=%ld cs=%016llx param=%u slot=%u res=%p groups=%u,%u,%u\r\n", (long)g_rtLogFrame, (unsigned long long)h, p, sl, (void*)r, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ); } }
+          break; } }
     FindUavAtDispatch();
     { static int s_p = -2, s_slot = 0, s_cnt = 1; static void* s_seen[256]; static volatile LONG s_ns = 0;
       if (s_p == -2) { char sb[48] = {}; s_p = -1; if (GetEnvironmentVariableA("ONRUSH_LOG_CSLOT", sb, sizeof(sb)) > 0) sscanf_s(sb, "%d:%d:%d", &s_p, &s_slot, &s_cnt); }

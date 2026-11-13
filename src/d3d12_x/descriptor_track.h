@@ -69,6 +69,28 @@ static inline ID3D12Resource *DescTrack_FindUav3D(UINT64 gpu, UINT count, UINT w
   return nullptr;
 }
 
+
+// Returns the first SRV/UAV (within `count` slots of the table at `gpu`) that is a 3D texture of exactly w x h x d, or null.
+static inline ID3D12Resource *DescTrack_FindTex3D(UINT64 gpu, UINT count, UINT w, UINT h, UINT d, UINT kind, UINT *slotOut) {
+  SIZE_T cpuBase = 0; UINT inc = 0;
+  AcquireSRWLockShared(&g_descLock);
+  for (auto &hh : g_descHeaps)
+    if (hh.gpu && gpu >= hh.gpu && gpu < hh.gpu + (UINT64)hh.num * hh.inc) {
+      cpuBase = hh.cpu + (SIZE_T)(gpu - hh.gpu); inc = hh.inc;
+      UINT left = (UINT)((hh.gpu + (UINT64)hh.num * hh.inc - gpu) / hh.inc); if (count > left) count = left; break;
+    }
+  ReleaseSRWLockShared(&g_descLock);
+  if (!cpuBase) return nullptr;
+  for (UINT k = 0; k < count; ++k) {
+    DescInfo di;
+    if (!DescTrack_Get(cpuBase + (SIZE_T)k * inc, &di) || !di.res || di.kind != kind) continue;
+    D3D12_RESOURCE_DESC rd = {}; bool ok = false;
+    __try { rd = di.res->GetDesc(); ok = true; } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (ok && rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D && rd.Width == w && rd.Height == h && rd.DepthOrArraySize == d) { if (slotOut) *slotOut = k; return di.res; }
+  }
+  return nullptr;
+}
+
 // Logs up to `count` descriptors of the table starting at GPU handle `gpu`.
 static inline void DescTrack_LogTable(const char *tag, UINT slot, UINT64 gpu, UINT count) {
   SIZE_T cpuBase = 0; UINT inc = 0;
