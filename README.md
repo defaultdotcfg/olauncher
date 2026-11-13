@@ -19,6 +19,9 @@
 > [!IMPORTANT]
 > O RushLauncher é um projeto de fãs, **não oficial**, sem nenhuma ligação com a Codemasters ou a Electronic Arts. **Este repositório e as releases não contêm nenhum arquivo do jogo**: nada de executáveis, DLLs do sistema do console, assets ou shaders (originais ou traduzidos). Para jogar, você precisa da **sua própria cópia** do pacote do jogo. Os shaders são lidos e traduzidos na sua máquina, a partir dessa cópia.
 
+> [!NOTE]
+> O RushLauncher é um **projeto de hobby**, feito no tempo livre, **sem manutenção ativa** e **sem cronograma de atualizações**: novas versões saem quando (e se) houver tempo. Pull requests são bem-vindos, mas **provavelmente não serão revisados**.
+
 **Conteúdo:** [O que é](#o-que-é-o-rushlauncher) · [Destaques](#destaques) · [Download](#download) · [Início rápido](#início-rápido) · [Controles](#controles) · [Configurações](#configurações) · [Dicas](#dicas) · [Perguntas frequentes](#perguntas-frequentes-e-problemas) · [Próximos passos](#próximos-passos) · [Para desenvolvedores](#para-desenvolvedores) · [Créditos](#créditos) · [Licença](#licença) · [Aviso legal](#aviso-legal)
 
 ## O que é o RushLauncher?
