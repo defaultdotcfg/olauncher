@@ -391,6 +391,10 @@ class Tr:
                 T = tgt(args)
                 if T is not None and T <= P:
                     cond = LOOP_OPS[op]
+                    # s_cbranch_vcc*/exec* test the whole wave's mask: keep every lane in the loop while any lane is
+                    # still active (the body is predicated by ex), as on GCN (see the mask-op SCC note).
+                    if cond in ('vcc', '!vcc', 'ex', '!ex') and not _ENV.get('PERLANE_LOOPS'):
+                        cond = cond.replace(cond.lstrip('!'), f"WaveActiveAnyTrue({cond.lstrip('!')})")
                     if T == lps[-1][0] and P == lps[-1][1]:
                         self.emit(f"if (!({cond})) break;   // {op} {args}"); lps[-1][3].append(len(self.body) - 1)
                         self.emit("}"); lps[-1][3].append(len(self.body) - 1)
@@ -403,7 +407,10 @@ class Tr:
                         self.emit(f"if ({cond}) continue;   // {op} {args}"); lps[-1][3].append(len(self.body) - 1); continue
                 elif T is not None and T > lps[-1][1]:
                     # forward branch leaving the innermost loop: break
-                    self.emit(f"if ({LOOP_OPS[op]}) break;   // exit {op} {args}"); lps[-1][3].append(len(self.body) - 1); continue
+                    c_ = LOOP_OPS[op]
+                    if c_ in ('vcc', '!vcc', 'ex', '!ex') and not _ENV.get('PERLANE_LOOPS'):
+                        c_ = c_.replace(c_.lstrip('!'), f"WaveActiveAnyTrue({c_.lstrip('!')})")
+                    self.emit(f"if ({c_}) break;   // exit {op} {args}"); lps[-1][3].append(len(self.body) - 1); continue
             # Loop guard (CS too): a uniform forward s_cbranch_scc* that stays inside the current loop, e.g.
             # `s_cmp_ge i, n ; s_cbranch_scc0 L ; s_andn2 keep, keep, exec ; s_cbranch_scc0 exit ; L:` - predicating it ran the
             # andn2 every iteration and killed every lane at once (clustered light/probe lists came out empty). NO_LOOP_SIF=1 = old.
@@ -576,7 +583,12 @@ class Tr:
             dt = self.mask_target(A[0]); x = self.src(A[1], 'b') if False else self.maskval(A[1]); y = self.maskval(A[2])
             e = {'s_and_b64': f"{x} && {y}", 's_or_b64': f"{x} || {y}", 's_xor_b64': f"{x} != {y}", 's_andn2_b64': f"{x} && !{y}",
                  's_orn2_b64': f"{x} || !{y}", 's_nand_b64': f"!({x} && {y})", 's_nor_b64': f"!({x} || {y})"}[op]
-            self.emit(f"{dt} = {e};"); self.decl.add(dt); self.emit("scc = (" + dt + ");"); return
+            # SCC of a 64-bit mask op is "result != 0" over the whole wave, not a per-lane value: a per-lane SCC made
+            # waterfall loops (`s_andn2 todo, todo, exec ; s_cbranch_scc0 done`) exit lane by lane, so later
+            # iterations ran with quad neighbours gone and implicit-derivative samples picked garbage mips
+            # (blocky explosions / stair-stepped particle edges). PERLANE_LOOPS=1 = old behaviour.
+            self.emit(f"{dt} = {e};"); self.decl.add(dt)
+            self.emit(("scc = (" + dt + ");") if _ENV.get('PERLANE_LOOPS') else f"scc = WaveActiveAnyTrue({dt}) ? 1u : 0u;"); return
         if op == 's_and_saveexec_b64':
             dt = self.mask_target(A[0]); x = self.maskval(A[1])
             if re.search(rf"\b{dt}\b", x) and not _ENV.get('OLD_SAVEEXEC'):

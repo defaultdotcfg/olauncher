@@ -45,9 +45,13 @@ sys.path.insert(0, HERE)
 #     dword from the address just overwritten by the first. GCN reads the address once, at issue. The temporal
 #     upscaler (CS 83717de2) got a garbage red value in its neighbourhood min/max: cyan and red fringes and trails
 #     behind moving cars and around trees.
-TRANSLATOR_REV = 12
+# 13: the SCC of 64-bit mask ops and s_cbranch_vcc*/exec* loop exits were per-lane values, so waterfall loops
+#     (readfirstlane over a bindless texture index) let each lane leave as soon as its own texture was sampled. Later
+#     iterations ran with quad neighbours gone and implicit-derivative samples got undefined mips: blocky, stair-stepped
+#     explosions and particles. Now the whole wave stays in the loop while any lane is active, as on GCN.
+TRANSLATOR_REV = 13
 RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs'),
-               11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs')}
+               11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs'), 13: ('vs', 'ps', 'cs')}
 
 
 def say(*a):
