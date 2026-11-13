@@ -49,9 +49,13 @@ sys.path.insert(0, HERE)
 #     (readfirstlane over a bindless texture index) let each lane leave as soon as its own texture was sampled. Later
 #     iterations ran with quad neighbours gone and implicit-derivative samples got undefined mips: blocky, stair-stepped
 #     explosions and particles. Now the whole wave stays in the loop while any lane is active, as on GCN.
-TRANSLATOR_REV = 13
+# 14: tbuffer_load_format_x/xy/xyz with idxen on a constant buffer used the format width (4/8/12 bytes) as the index
+#     stride; DXBC cbuffers are float4 registers, the V# stride is 16. The GPU particle lighting CS (31ff8b85) read
+#     the sun cascade matrices from the wrong registers: every particle inside the shadow cascades was fully shadowed,
+#     so water spray, dust and smoke came out dark, bluish and nearly invisible.
+TRANSLATOR_REV = 14
 RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs'),
-               11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs'), 13: ('vs', 'ps', 'cs')}
+               11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs'), 13: ('vs', 'ps', 'cs'), 14: ('vs', 'ps', 'cs', 'tess')}
 
 
 def say(*a):

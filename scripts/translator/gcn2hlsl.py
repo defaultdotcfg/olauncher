@@ -1269,7 +1269,10 @@ class Tr:
         else: raise ValueError(f"unsupported tbuffer format dfmt:{dfmt} nfmt:{nfmt}")
         parts = [f"{off}u"]; r_ = va
         if idxen:
-            parts.append(f"v{r_} * {stride if bk == 'sb' else esz}u"); r_ += 1
+            # V# index stride: the structured record for SBs; 16 for constant buffers (DXBC cbuffers are float4
+            # registers, so `cb0[r0.x + 96].xyz` is tbuffer_load_format_xyz idxen with a 16-byte stride, whatever the
+            # format width); the element size for typed buffers.
+            parts.append(f"v{r_} * {stride if bk == 'sb' else (16 if bk == 'cb' else esz)}u"); r_ += 1
         if offen: parts.append(f"v{r_}")
         ad = self.t(); self.emit(f"uint {ad} = " + " + ".join(parts) + ";")
         nreq = len(comps)
