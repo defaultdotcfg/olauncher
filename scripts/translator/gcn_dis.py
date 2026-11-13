@@ -126,7 +126,9 @@ def disasm(code):
             text = f"{name} {sreg(sd, 2 if wide else 1)}, {src(s0, lit, 2 if wide else 1)}"
         elif top9 == 0x17E:          # SOPC
             op = (w >> 16) & 0x7F; s0 = w & 0xFF; s1 = (w >> 8) & 0xFF
-            text = f"{SOPC.get(op, f'sopc_op{op}')} {src(s0)}, {src(s1)}"
+            # SSRC 255 = 32-bit literal in the next dword (s_cmp_gt_u32 s2, 0x800): consume it, or it decodes as an instruction
+            lit = W(i + 1) if 255 in (s0, s1) else None; ln = 2 if lit is not None else 1
+            text = f"{SOPC.get(op, f'sopc_op{op}')} {src(s0, lit)}, {src(s1, lit)}"
         elif top9 == 0x17F:          # SOPP
             op = (w >> 16) & 0x7F; imm = w & 0xFFFF
             name = SOPP.get(op, f"sopp_op{op}")

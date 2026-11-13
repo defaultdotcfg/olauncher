@@ -33,8 +33,12 @@ sys.path.insert(0, HERE)
 #    stable. Nitro jets, auras, wreck/splash particles come from them. An old skip.txt is emptied once.
 # 9: sun cascade shadow mask CS (48facb18): its wave-level vccz/vccnz branches (GCN tests the whole 64-lane wave) are structured as
 #    "any lane of the 64-thread group" (`_sif_any64`); before, far terrain came out fully shadowed and the pre-race floor was white.
-TRANSLATOR_REV = 9
-RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',)}
+# 10: SOPC with a literal operand (`s_cmp_gt_u32 s2, 0x800`) now consumes the literal dword, which was decoded as a stray
+#     v_cndmask; loops holding a group barrier stay real loops when all their exits are uniform (scalar SCC). The GPU particle
+#     bitonic sort (c2d308f5, ca754cf8, ...) ran one step only: unsorted keys gave the 16 particle draws 0..2 instances (or -1),
+#     so dust, smoke and water splash were missing. 32 shaders change (1 PS, 31 CS).
+TRANSLATOR_REV = 10
+RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs')}
 
 
 def say(*a):

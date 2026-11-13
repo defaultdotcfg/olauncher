@@ -87,6 +87,7 @@ static inline ID3D12Resource *DescTrack_FindTex3D(UINT64 gpu, UINT count, UINT w
     D3D12_RESOURCE_DESC rd = {}; bool ok = false;
     __try { rd = di.res->GetDesc(); ok = true; } __except (EXCEPTION_EXECUTE_HANDLER) {}
     if (ok && rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D && rd.Width == w && rd.Height == h && rd.DepthOrArraySize == d) { if (slotOut) *slotOut = k; return di.res; }
+    if (ok && d == 0 && rd.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && rd.Width == w) { if (slotOut) *slotOut = k; return di.res; }  // WxDx0 = buffer of width W
   }
   return nullptr;
 }

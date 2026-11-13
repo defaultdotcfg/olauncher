@@ -230,6 +230,24 @@ class Tr:
     def has_pos(self): return any(e['sv'] == 1 or e['name'].upper() == 'SV_POSITION' for e in self.ins)
     @property
     def has_ff(self): return any(e['name'].upper() == 'SV_ISFRONTFACE' for e in self.ins)
+    # A loop holding a group barrier may stay a real loop when every exit/continue is uniform: its condition is
+    # `true` or a SCC that was last set from scalar values only (s_cmp on SGPRs/constants, e.g. the bitonic-sort
+    # stage counters `s_cmp_gt_u32 s2, 0x800`). Commenting such a loop out ran its body once and left the
+    # particle sort keys unsorted (splash/spray draw ranges of 0..2 particles). NO_UNIFORM_LOOPS=1 = old behaviour.
+    def _uniform_loop(self, at, extra):
+        if os.environ.get('NO_UNIFORM_LOOPS'): return False
+        for e in extra:
+            L = self.body[e].strip()
+            if L == '}': continue
+            m = re.match(r'if \(!?\(?(.*?)\)?\) (break|continue);', L)
+            if not m: return False
+            cond = m.group(1).strip('() ')
+            if cond == 'true': continue
+            if cond not in ('scc != 0u', 'scc == 0u'): return False
+            last = next((B for B in reversed(self.body[:e]) if B.lstrip().startswith('scc = ')), None)
+            if last is None or re.search(r'\bex\b|\bvcc\b|\bsp_\d+|\bv\d+\b|\blane\b|\bflat\b', last): return False
+        return True
+
     # ---------------- translation
     def run(self):
         raw = open(self.path, 'rb').read()
@@ -330,7 +348,7 @@ class Tr:
                         self.emit(f"if (!({cond})) break;   // {op} {args}"); lps[-1][3].append(len(self.body) - 1)
                         self.emit("}"); lps[-1][3].append(len(self.body) - 1)
                         h_, t_, at_, extra_ = lps.pop()
-                        if any('GroupMemoryBarrier' in L for L in self.body[at_:]):
+                        if any('GroupMemoryBarrier' in L for L in self.body[at_:]) and not self._uniform_loop(at_, extra_):
                             self.body[at_] = '// ' + self.body[at_] + ' (loop unstructured: barrier inside)'
                             for e_ in extra_: self.body[e_] = '// ' + self.body[e_]
                         continue

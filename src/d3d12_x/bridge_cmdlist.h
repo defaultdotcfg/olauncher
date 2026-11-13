@@ -784,7 +784,10 @@ static void STDMETHODCALLTYPE BridgeCmdList_Dispatch(
     { static const bool s_wa = GetEnvironmentVariableA("ONRUSH_WATCH_AO", nullptr, 0) > 0;
       if (s_wa) for (UINT p = 0; p < 16; ++p) { if (!t_ctab[p]) continue; UINT sl = 0; ID3D12Resource* r = DescTrack_FindUav3D(t_ctab[p], 64, 128, &sl); if (r && IsAoRes(r)) { static void* s_seen[256]; static volatile LONG s_ns = 0; bool seen = false; LONG n_ = s_ns; void* k_ = (void*)((UINT64)t_lastPso ^ (UINT64)r ^ ((UINT64)ThreadGroupCountZ << 40)); for (LONG q = 0; q < n_ && q < 256; ++q) if (s_seen[q] == k_) seen = true;
           if (!seen) { LONG id_ = InterlockedIncrement(&s_ns) - 1; if (id_ < 256) s_seen[id_] = k_; log_line("[watchao] f%ld dispatch pso=%p param=%u slot=%u res=%p groups=%u,%u,%u type=%d\r\n", (long)g_rtLogFrame, t_lastPso, p, sl, (void*)r, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ, (int)self->m_type); } } } }
-    { static const bool s_logAll = GetEnvironmentVariableA("ONRUSH_LOG_DISPATCH", nullptr, 0) > 0; if (s_logAll) log_line("[dispall] pso=%p groups=%u,%u,%u\r\n", t_lastPso, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ); }
+    { // ONRUSH_LOG_DISPATCH=1: every dispatch; =N (>1): only the dispatches recorded in frame N, with the CS hash and list type
+      static long s_la = -2; if (s_la == -2) { char lb[16] = {}; s_la = GetEnvironmentVariableA("ONRUSH_LOG_DISPATCH", lb, sizeof(lb)) > 0 ? atol(lb) : -1; }
+      extern volatile LONG g_rtLogFrame;
+      if (s_la == 1 || (s_la > 1 && g_rtLogFrame == s_la)) log_line("%s pso=%p cs=%016llx list=%d groups=%u,%u,%u\r\n", "[dispall]", t_lastPso, (unsigned long long)BcPsoHash(t_lastPso), self ? (int)self->m_type : -1, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ); }
     LONG tsIdx = -1; ID3D12GraphicsCommandList* tsCl = nullptr;
     if (g_drawDetail && g_tsHeap && g_tsReadback && self && self->m_pRealCmdList && self->m_type == D3D12_COMMAND_LIST_TYPE_DIRECT) { LONG ti = InterlockedIncrement(&g_tsNext) - 1; if (ti < 1024) { tsIdx = ti; tsCl = self->m_pRealCmdList; g_tsInfo[ti] = { t_lastPso, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ }; tsCl->EndQuery(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * ti)); } }
     if (g_drawDetail && InterlockedIncrement(&g_drawDetailCount) <= 3000)
@@ -1995,6 +1998,9 @@ static XProbe g_xProbe[16]; static volatile LONG g_xProbeCount = 0;
 static void ExecIndirectScoped(BridgeCommandList* self, ID3D12CommandSignature* sig, UINT maxc, ID3D12Resource* arg, UINT64 aoff, ID3D12Resource* cnt, UINT64 coff)
 {
     if (g_drawDetail && (((LookupSigKind(sig) / 1000) == 2 || (LookupSigKind(sig) / 1000) == 105) == (GetEnvironmentVariableA("ONRUSH_XPROBE_DISPATCH", nullptr, 0) > 0))) { static volatile LONG s_xp = 0; LONG ix = InterlockedIncrement(&s_xp) - 1; if (ix < 16) { g_xProbe[ix] = { LookupSigKind(sig), arg, aoff, cnt, coff, maxc, sig, (self->m_pActiveRenderTarget ? self->m_pActiveRenderTarget : LookupRtvResource((SIZE_T)t_om.h0)) }; g_xProbeCount = ix + 1; } }
+    { static long s_la = -2; if (s_la == -2) { char lb[16] = {}; s_la = GetEnvironmentVariableA("ONRUSH_LOG_DISPATCH", lb, sizeof(lb)) > 0 ? atol(lb) : -1; }
+      extern volatile LONG g_rtLogFrame;
+      if (s_la > 1 && g_rtLogFrame == s_la) log_line("%s pso=%p sh=%016llx list=%d sig=%d max=%u arg=%p+%llu\r\n", "[dispall] X", t_lastPso, (unsigned long long)BcPsoHash(t_lastPso), self ? (int)self->m_type : -1, LookupSigKind(sig), maxc, (void*)arg, (unsigned long long)aoff); }
     PsQueryScope psqx(self, 'X', maxc);
     if ((LookupSigKind(sig) / 1000) <= 1) { LogDrawOnRtWidth(self, 0xFFFFFFFFu, maxc); if (SkipDrawByShader()) return; }
     LONG bc = BcBegin(self, 'X', (UINT)LookupSigKind(sig), maxc, (UINT)aoff);
