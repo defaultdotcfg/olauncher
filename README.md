@@ -16,10 +16,10 @@
   <a href="https://github.com/defaultdotcfg/rushlauncher/issues">Reportar um bug</a>
 </p>
 
-> [!IMPORTANTE]
+> [!IMPORTANT]
 > O RushLauncher **não contêm nenhum arquivo do jogo**. Para jogar, você precisa da **sua própria cópia** do pacote do jogo. Os shaders são lidos e traduzidos na sua máquina, a partir dessa cópia.
 
-> [!NOTA]
+> [!NOTE]
 > Este é um **projeto de hobby**, feito no meu tempo livre, **sem manutenção ativa** e **sem cronograma de atualizações**: novas versões saem quando (e se) houver tempo. Pull requests são bem-vindos, mas **provavelmente não serão revisados**.
 
 **Conteúdo:** [O que é](#o-que-é-o-rushlauncher) · [Destaques](#destaques) · [Download](#download) · [Início rápido](#início-rápido) · [Controles](#controles) · [Configurações](#configurações) · [Dicas](#dicas) · [Perguntas frequentes](#perguntas-frequentes-e-problemas) · [Próximos passos](#próximos-passos) · [Para desenvolvedores](#para-desenvolvedores) · [Créditos](#créditos) · [Licença](#licença) · [Aviso legal](#aviso-legal)
