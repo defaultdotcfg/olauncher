@@ -104,7 +104,65 @@ static std::vector<BYTE> VerString(const wchar_t *s)
     return std::vector<BYTE>(b, b + (wcslen(s) + 1) * 2);
 }
 
-// onrush-pc.exe = copy of game_release_xbox.exe with the ONRUSH(TM) version resource.
+// The launcher's own icon group (resource 1 in launcher.rc), as stored in the module.
+static const BYTE *OwnIconGroup(DWORD *size)
+{
+    HMODULE self = GetModuleHandleW(nullptr);
+    HRSRC r = FindResourceW(self, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(14) /* RT_GROUP_ICON */);
+    HGLOBAL g = r ? LoadResource(self, r) : nullptr;
+    *size = r ? SizeofResource(self, r) : 0;
+    return g && *size >= 6 ? (const BYTE *)LockResource(g) : nullptr;
+}
+
+// Writes the launcher's icon (RT_GROUP_ICON 1 + its RT_ICON images) into the exe being updated.
+// The game exe ships no icon, so these are new entries.
+static bool CopyOwnIcon(HANDLE h)
+{
+    DWORD gsz = 0; const BYTE *grp = OwnIconGroup(&gsz);
+    if (!grp) return false;
+    HMODULE self = GetModuleHandleW(nullptr);
+    const WORD count = *(const WORD *)(grp + 4);
+    if (gsz < 6u + 14u * count) return false;
+    for (WORD i = 0; i < count; ++i)
+    {
+        const WORD id = *(const WORD *)(grp + 6 + 14 * i + 12);  // GRPICONDIRENTRY.nID
+        HRSRC r = FindResourceW(self, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(3) /* RT_ICON */);
+        HGLOBAL g = r ? LoadResource(self, r) : nullptr;
+        void *p = g ? LockResource(g) : nullptr;
+        if (!p || !UpdateResourceW(h, MAKEINTRESOURCEW(3), MAKEINTRESOURCEW(id), 0x0409, p, SizeofResource(self, r))) return false;
+    }
+    return UpdateResourceW(h, MAKEINTRESOURCEW(14), MAKEINTRESOURCEW(1), 0x0409, (void *)grp, gsz) != FALSE;
+}
+
+// True when onrush-pc.exe lacks the launcher's current icon (made by an older launcher, or the icon changed).
+static bool GameExeIconStale(const wchar_t *dir)
+{
+    wchar_t exe[MAX_PATH];
+    swprintf_s(exe, MAX_PATH, L"%ls\\onrush-pc.exe", dir);
+    DWORD osz = 0; const BYTE *own = OwnIconGroup(&osz);
+    if (!own) return false;
+    HMODULE m = LoadLibraryExW(exe, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!m) return false;
+    bool stale = true;
+    HRSRC r = FindResourceW(m, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(14));
+    HGLOBAL g = r ? LoadResource(m, r) : nullptr;
+    const void *p = g ? LockResource(g) : nullptr;
+    if (p && SizeofResource(m, r) == osz && memcmp(p, own, osz) == 0)
+    {   // same group (sizes, byte counts); also compare the largest image's bytes
+        const WORD count = *(const WORD *)(own + 4);
+        const WORD id = *(const WORD *)(own + 6 + 14 * (count - 1) + 12);
+        HRSRC a = FindResourceW(m, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(3));
+        HRSRC b = FindResourceW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(3));
+        const void *pa = a ? LockResource(LoadResource(m, a)) : nullptr;
+        const void *pb = b ? LockResource(LoadResource(GetModuleHandleW(nullptr), b)) : nullptr;
+        stale = !(pa && pb && SizeofResource(m, a) == SizeofResource(GetModuleHandleW(nullptr), b) &&
+                  memcmp(pa, pb, SizeofResource(m, a)) == 0);
+    }
+    FreeLibrary(m);
+    return stale;
+}
+
+// onrush-pc.exe = copy of game_release_xbox.exe with the ONRUSH(TM) version resource and the launcher's icon.
 static bool BrandGameExe(const wchar_t *dir)
 {
     wchar_t src[MAX_PATH], dst[MAX_PATH];
@@ -127,6 +185,7 @@ static bool BrandGameExe(const wchar_t *dir)
     HANDLE h = BeginUpdateResourceW(dst, FALSE);
     if (!h) return true;  // plain copy still works, only the name in Task Manager differs
     BOOL ok = UpdateResourceW(h, MAKEINTRESOURCEW(16) /* RT_VERSION */, MAKEINTRESOURCEW(1), 0x0809, ver.data(), (DWORD)ver.size());
+    if (ok && !CopyOwnIcon(h)) LogPrintf(L"[Setup] onrush-pc.exe sem o ícone do launcher\r\n");
     if (!EndUpdateResourceW(h, ok ? FALSE : TRUE) || !ok) LogPrintf(L"[Setup] onrush-pc.exe sem o nome ONRUSH (recurso de versão não gravado)\r\n");
     return true;
 }

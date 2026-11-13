@@ -1,6 +1,8 @@
-<img width="300" height="80" alt="rush_launcher_white" align="center" src="https://github.com/user-attachments/assets/60723459-9d94-48f2-b413-8f5a5d927254" />
+<p align="center">
+  <img width="300" height="80" alt="rushlauncher" src="https://github.com/user-attachments/assets/60723459-9d94-48f2-b413-8f5a5d927254" />
+</p>
 
-## rushlauncher — Port para PC de ONRUSH™
+# rushlauncher — Port para PC de ONRUSH™
 
 Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão final 1.80.100.100)** nativamente no Windows x64 com Direct3D 12.
 
@@ -26,7 +28,7 @@ Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão final 1.
 
 ## Como jogar
 
-1. Extraia o zip da [última release](https://github.com/defaultdotcfg/olauncher/releases/latest) numa pasta (num disco NTFS).
+1. Extraia o zip da [última release](https://github.com/defaultdotcfg/rushlauncher/releases/latest) numa pasta (num disco NTFS).
 2. Abra `OnRushLauncher.exe` e aperte **JOGAR**. O launcher pede a pasta da sua cópia do jogo: o pacote extraído, com `Mount\` e `EmbeddedXvd\`.
 3. O launcher prepara o jogo na própria pasta:
    - copia o executável e os arquivos pequenos do jogo (~60 MB);
@@ -35,7 +37,7 @@ Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão final 1.
    A sua cópia não é alterada. Pela linha de comando: `OnRushLauncher.exe -setup "D:\caminho\do\pacote"`.
 4. **Shaders**: na primeira vez, o JOGAR mostra "Preparando shaders" e abre o jogo algumas vezes sozinho, numa janela pequena e sem som, para ele gravar os shaders que usa. O launcher traduz esses shaders (tradutor embutido em `translator\`, sem Python) e só então abre o jogo de verdade. Isso leva alguns minutos e acontece uma vez só.
 5. Depois, os shaders de menus e pistas que você ainda não tinha visitado são traduzidos quando o jogo fecha (ou no próximo JOGAR). O botão **Pular** do "Preparando shaders" abre o jogo na hora; o que faltou é feito na próxima vez.
-6. O launcher tem função de buscar futuras atualizações e atualizar automaticamente, caso já tenha uma versão do rushlauncher instalado.
+6. O launcher procura novas versões no GitHub e, se você aceitar, se atualiza sozinho (configurações, saves, shaders e arquivos do jogo são mantidos).
 
 ## Como compilar
 
@@ -64,13 +66,12 @@ Para traduzir os shaders sem o launcher (com Python e o Windows SDK): `python sc
 
 ONRUSH é marca da Codemasters/Electronic Arts. Este projeto não é afiliado nem endossado por elas e não distribui conteúdo do jogo.
 
-## NOTAS
+## Notas
 
-##O port está sendo desenvolvido com os seguintes periféricos:
+O port está sendo desenvolvido e testado neste hardware:
 
 - Ryzen 7 5700
 - NVIDIA RTX 3060 (12GB)
 - 40 GB RAM (DDR4)
 
-Espere em futuras versões melhores otimizações e ajustes de compilação de shaders.
----
+Espere melhores otimizações e ajustes na compilação de shaders nas próximas versões.

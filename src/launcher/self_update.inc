@@ -1,7 +1,7 @@
 // ============================================================================
 // Launcher self-update (after update_check.inc found a newer release):
 //  1. downloads the release zip (only from this repository's release downloads) to
-//     %TEMP%\olauncher-update and checks its SHA-256 against the "digest" GitHub publishes for the asset;
+//     %TEMP%\rushlauncher-update and checks its SHA-256 against the "digest" GitHub publishes for the asset;
 //  2. extracts it with Windows' own tar.exe;
 //  3. copies this exe to the temp folder and runs that copy with
 //       -applyupdate "<extracted folder>" "<launcher folder>" <pid>
@@ -38,7 +38,7 @@ static bool UpdateTempDir(wchar_t *out)
 {
     wchar_t tmp[MAX_PATH];
     if (!GetTempPathW(MAX_PATH, tmp)) return false;
-    swprintf_s(out, MAX_PATH, L"%lsolauncher-update", tmp);
+    swprintf_s(out, MAX_PATH, L"%lsrushlauncher-update", tmp);
     return true;
 }
 
@@ -97,11 +97,11 @@ static DWORD WINAPI UpdateDownloadThread(LPVOID param)
     if (!UpdateTempDir(base)) { wcscpy_s(job->error, L"pasta temporária"); goto done; }
     UpdateDeleteTree(base);  // leftovers of an earlier attempt
     CreateDirectoryW(base, nullptr);
-    swprintf_s(zip, MAX_PATH, L"%ls\\olauncher-%ls.zip", base, job->tag);
+    swprintf_s(zip, MAX_PATH, L"%ls\\rushlauncher-%ls.zip", base, job->tag);
     swprintf_s(stage, MAX_PATH, L"%ls\\files", base);
 
     if (!WinHttpCrackUrl(job->asset, 0, 0, &uc)) { wcscpy_s(job->error, L"endereço inválido"); goto done; }
-    ses = WinHttpOpen(L"olauncher-update/" OLAUNCHER_VERSION, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    ses = WinHttpOpen(L"rushlauncher-update/" OLAUNCHER_VERSION, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (ses) WinHttpSetTimeouts(ses, 10000, 10000, 15000, 30000);
     con = ses ? WinHttpConnect(ses, host, uc.nPort, 0) : nullptr;
     req = con ? WinHttpOpenRequest(con, L"GET", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
@@ -150,7 +150,7 @@ static DWORD WINAPI UpdateDownloadThread(LPVOID param)
         DWORD ec = 1;
         if (!UpdateRun(tar, cmd, 120000, &ec) || ec != 0) { swprintf_s(job->error, L"falha ao descompactar (tar %lu)", ec); goto done; }
     }
-    {   // the zip has one top folder (olauncher-vX.Y.Z); accept files at the root too
+    {   // the zip has one top folder (any name); accept files at the root too
         wchar_t probe[MAX_PATH], pat[MAX_PATH];
         swprintf_s(probe, MAX_PATH, L"%ls\\OnRushLauncher.exe", stage);
         if (GetFileAttributesW(probe) != INVALID_FILE_ATTRIBUTES) wcscpy_s(job->srcDir, MAX_PATH, stage);
@@ -203,7 +203,7 @@ static bool LaunchUpdateInstaller(const UpdateJob *job, wchar_t *err, int errLen
     wchar_t base[MAX_PATH], self[MAX_PATH], copy[MAX_PATH], cmd[4 * MAX_PATH];
     if (!UpdateTempDir(base)) { wcscpy_s(err, errLen, L"pasta temporária"); return false; }
     GetModuleFileNameW(nullptr, self, MAX_PATH);
-    swprintf_s(copy, MAX_PATH, L"%ls\\olauncher-updater.exe", base);
+    swprintf_s(copy, MAX_PATH, L"%ls\\rushlauncher-updater.exe", base);
     if (!CopyFileW(self, copy, FALSE)) { swprintf_s(err, errLen, L"cópia do instalador (%lu)", GetLastError()); return false; }
     swprintf_s(cmd, 4 * MAX_PATH, L"\"%ls\" -applyupdate \"%ls\" \"%ls\" %lu", copy, job->srcDir, g_exeDir, GetCurrentProcessId());
     STARTUPINFOW si = { sizeof(si) };
@@ -213,7 +213,7 @@ static bool LaunchUpdateInstaller(const UpdateJob *job, wchar_t *err, int errLen
     return true;
 }
 
-// ---- "-applyupdate <src> <dst> <pid>" (runs from %TEMP%\olauncher-update) ----
+// ---- "-applyupdate <src> <dst> <pid>" (runs from %TEMP%\rushlauncher-update) ----
 static bool UpdateKeepName(const wchar_t *name)
 {
     for (const wchar_t *k : kUpdateKeep) if (!_wcsicmp(name, k)) return true;
@@ -271,7 +271,7 @@ static int RunApplyUpdate()
     if (!ok)
         MessageBoxW(nullptr, (std::wstring(L"Não foi possível concluir a atualização do launcher.\nArquivos não atualizados:") + err +
                               L"\n\nBaixe o zip da versão nova no GitHub e extraia por cima da pasta do launcher.").c_str(),
-                    L"ONRUSH Launcher", MB_ICONWARNING);
+                    L"RushLauncher", MB_ICONWARNING);
     wchar_t exe[MAX_PATH], cmd[2 * MAX_PATH];
     swprintf_s(exe, MAX_PATH, L"%ls\\OnRushLauncher.exe", dst);
     swprintf_s(cmd, 2 * MAX_PATH, L"\"%ls\" %ls", exe, ok ? L"-updated" : L"");

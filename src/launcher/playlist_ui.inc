@@ -713,14 +713,9 @@ static void PlDrawHero(Gdiplus::Graphics &g)
     g.DrawString(PT(P_HINT), -1, &fSmall, Gdiplus::PointF(220, UI_H - 32), &muted);
     Gdiplus::SolidBrush rail(Gdiplus::Color(255, 18, 14, 11));
     g.FillRectangle(&rail, 0, 0, 216, UI_H);
-    Gdiplus::FontFamily brandFace(L"Segoe UI");
-    Gdiplus::Font brand(&brandFace, 16, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-    Gdiplus::Font cap(&brandFace, 11, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-    Gdiplus::SolidBrush accent(Gdiplus::Color(255, 226, 132, 67));
     Gdiplus::SolidBrush ready(Gdiplus::Color(255, 145, 195, 133));
     Gdiplus::SolidBrush missing(Gdiplus::Color(255, 220, 86, 62));
-    g.DrawString(L"RUSHLAUNCHER", -1, &brand, Gdiplus::PointF(24, 48), &white);
-    g.DrawString(L"v" OLAUNCHER_VERSION, -1, &cap, Gdiplus::PointF(24, 74), &accent);
+    DrawRailBrand(g);
     g.DrawString(T(S_GAMEDIR), -1, &fSmall, Gdiplus::PointF(24, 470), &muted);
     const wchar_t *gameStatus = g_gameRunning ? T(S_RUNNING) : (g_gameDirOk ? T(S_READY) : T(S_NOTFOUND));
     g.FillEllipse(g_gameDirOk ? &ready : &missing, 24, 498, 8, 8);

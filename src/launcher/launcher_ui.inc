@@ -46,6 +46,30 @@ static Gdiplus::Bitmap *LogoBitmap()
     if (b && b->GetLastStatus() == Gdiplus::Ok) g_logo = b; else delete b;
     return g_logo;
 }
+// Logo + version at the top of the 216 px rail (same on every tab).
+static void DrawRailBrand(Gdiplus::Graphics &g)
+{
+    Gdiplus::FontFamily ff(L"Segoe UI");
+    Gdiplus::Font fTag(&ff, 11, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush orange(Gdiplus::Color(255, 226, 132, 67)), white(Gdiplus::Color(255, 244, 232, 215));
+    Gdiplus::StringFormat center; center.SetAlignment(Gdiplus::StringAlignmentCenter);
+    float lh = 0.f, ly = 34.f;
+    if (Gdiplus::Bitmap *logo = LogoBitmap())
+    {   // centred in the rail with 8 px margins
+        const float lw = 200.f; lh = lw * (float)LOGO_H / (float)LOGO_W;
+        const Gdiplus::InterpolationMode im = g.GetInterpolationMode();
+        g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+        g.DrawImage(logo, Gdiplus::RectF((216.f - lw) / 2.f, ly, lw, lh));
+        g.SetInterpolationMode(im);
+    }
+    else
+    {
+        Gdiplus::Font fBrand(&ff, 16, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+        lh = 22.f;
+        g.DrawString(L"RUSHLAUNCHER", -1, &fBrand, Gdiplus::RectF(0.f, ly, 216.f, lh), &center, &white);
+    }
+    g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::RectF(0.f, ly + lh + 6.f, 216.f, 16.f), &center, &orange);
+}
 static bool g_vsyncOn = true, g_d3dDebugOn = false, g_verboseOn = false, g_skipIntroOn = false;
 static HWND g_hSkipIntroChk = nullptr;
 static bool g_showAdvanced = false, g_showLog = false;
@@ -363,7 +387,7 @@ static void DrawHero(HDC hdc)
     Gdiplus::SolidBrush railBase(Gdiplus::Color(255, 18, 14, 11));
     g.FillRectangle(&railBase, 0, 0, 216, UI_H);
     if (g_tab == 1) { PlDrawHero(g); return; }
-    if (g_tab == 4) { PhDrawHero(g); return; }
+    if (g_tab == 4) { PhDrawHero(g); DrawRailBrand(g); return; }
     if (g_showLog)
     {
         Gdiplus::SolidBrush dim(Gdiplus::Color(235, 15, 12, 10));
@@ -376,25 +400,13 @@ static void DrawHero(HDC hdc)
     g.FillRectangle(&fade, 216, UI_H - 229, UI_HERO_W - 216, 229);
 
     Gdiplus::FontFamily ff(L"Segoe UI");
-    Gdiplus::Font fTag(&ff, 11, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
     Gdiplus::Font fStatus(&ff, 20, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
     Gdiplus::Font fSmall(&ff, 12, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
     Gdiplus::SolidBrush orange(Gdiplus::Color(255, 226, 132, 67)), white(Gdiplus::Color(255, 244, 232, 215)),
         muted(Gdiplus::Color(255, 181, 160, 139)), green(Gdiplus::Color(255, 145, 195, 133)), red(Gdiplus::Color(255, 220, 86, 62));
     Gdiplus::SolidBrush rail(Gdiplus::Color(255, 18, 14, 11));
     g.FillRectangle(&rail, 0, 0, 216, UI_H);
-    Gdiplus::Font fBrand(&ff, 16, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-    if (Gdiplus::Bitmap *logo = LogoBitmap())
-    {
-        const float lw = 184.f, lh = lw * (float)LOGO_H / (float)LOGO_W;
-        g.DrawImage(logo, Gdiplus::RectF(16.f, 38.f, lw, lh));
-        g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(14.f, 38.f + lh + 4.f), &orange);   // left edge of the logo (x=16) minus the glyph side bearing
-    }
-    else
-    {
-        g.DrawString(L"RUSHLAUNCHER", -1, &fBrand, Gdiplus::PointF(24, 48), &white);
-        g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::PointF(24, 74), &orange);
-    }
+    DrawRailBrand(g);
     g.DrawString(T(S_GAMEDIR), -1, &fSmall, Gdiplus::PointF(24, 470), &muted);
     const wchar_t *status = g_gameRunning ? T(S_RUNNING) : (g_gameDirOk ? T(S_READY) : T(S_NOTFOUND));
     Gdiplus::SolidBrush *dot = g_gameRunning ? &orange : (g_gameDirOk ? &green : &red);
@@ -933,9 +945,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             if (r->status == UPD_NEWER && r->asset[0] && r->sha256[0])
             {   // automatic update: download, close, install, reopen
                 swprintf_s(msgText, 512, T(S_UPD_ASK_INSTALL), r->tag, OLAUNCHER_VERSION);
-                if (MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_YESNO | MB_ICONINFORMATION) == IDYES)
+                if (MessageBoxW(hwnd, msgText, L"RushLauncher", MB_YESNO | MB_ICONINFORMATION) == IDYES)
                 {
-                    if (g_gameRunning || g_hPrepWnd || g_warmRound) MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"ONRUSH Launcher", MB_ICONINFORMATION);
+                    if (g_gameRunning || g_hPrepWnd || g_warmRound) MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"RushLauncher", MB_ICONINFORMATION);
                     else if (StartUpdateDownload(hwnd, *r)) LogPrintf(L"[Atualização] baixando %ls…\r\n", r->asset);
                     UpdateButtonText();
                 }
@@ -943,12 +955,12 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             else if (r->status == UPD_NEWER)
             {
                 swprintf_s(msgText, 512, T(S_UPD_ASK), r->tag, OLAUNCHER_VERSION);
-                if (MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_YESNO | MB_ICONINFORMATION) == IDYES)
+                if (MessageBoxW(hwnd, msgText, L"RushLauncher", MB_YESNO | MB_ICONINFORMATION) == IDYES)
                     ShellExecuteW(hwnd, L"open", r->url, nullptr, nullptr, SW_SHOWNORMAL);
             }
-            else if (r->status == UPD_LATEST) { swprintf_s(msgText, 512, T(S_UPD_LATEST), OLAUNCHER_VERSION); MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_ICONINFORMATION); }
-            else if (r->status == UPD_NO_RELEASE) MessageBoxW(hwnd, T(S_UPD_NONE), L"ONRUSH Launcher", MB_ICONINFORMATION);
-            else { swprintf_s(msgText, 512, T(S_UPD_FAIL), r->error); MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_ICONWARNING); }
+            else if (r->status == UPD_LATEST) { swprintf_s(msgText, 512, T(S_UPD_LATEST), OLAUNCHER_VERSION); MessageBoxW(hwnd, msgText, L"RushLauncher", MB_ICONINFORMATION); }
+            else if (r->status == UPD_NO_RELEASE) MessageBoxW(hwnd, T(S_UPD_NONE), L"RushLauncher", MB_ICONINFORMATION);
+            else { swprintf_s(msgText, 512, T(S_UPD_FAIL), r->error); MessageBoxW(hwnd, msgText, L"RushLauncher", MB_ICONWARNING); }
         }
         delete r;
         return 0;
@@ -966,7 +978,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         UpdateButtonText();
         wchar_t msgText[512], err[160] = {};
         if (job->ok && (g_gameRunning || g_hPrepWnd || g_warmRound))
-            MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"ONRUSH Launcher", MB_ICONINFORMATION);
+            MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"RushLauncher", MB_ICONINFORMATION);
         else if (job->ok && LaunchUpdateInstaller(job, err, 160))
         {
             LogPrintf(L"[Atualização] %ls baixada e conferida; o launcher fecha para instalar\r\n", job->tag);
@@ -981,7 +993,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             const wchar_t *why = job->ok ? err : job->error;
             LogPrintf(L"[Atualização] falhou: %ls\r\n", why);
             swprintf_s(msgText, 512, T(S_UPD_DLFAIL), why);
-            if (MessageBoxW(hwnd, msgText, L"ONRUSH Launcher", MB_YESNO | MB_ICONWARNING) == IDYES)
+            if (MessageBoxW(hwnd, msgText, L"RushLauncher", MB_YESNO | MB_ICONWARNING) == IDYES)
                 ShellExecuteW(hwnd, L"open", g_updateLast.url[0] ? g_updateLast.url : OLAUNCHER_RELEASES L"/latest", nullptr, nullptr, SW_SHOWNORMAL);
         }
         delete job;
@@ -1058,7 +1070,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
                 RefreshGameDirStatus(hwnd);
             }
-            if (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") && FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") && BrandGameExe(g_gameDirShown))
+            if (FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") &&
+                (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") || GameExeIconStale(g_gameDirShown)) && BrandGameExe(g_gameDirShown))
                 LogPrintf(L"[Setup] onrush-pc.exe criado a partir de game_release_xbox.exe\r\n");
             if (g_hPrepWnd || g_warmRound) return 0;  // already preparing
             {
@@ -1260,7 +1273,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     RECT wr = { 0, 0, UI_W, UI_H };
     AdjustWindowRectEx(&wr, style, FALSE, WS_EX_APPWINDOW);
     int ww = wr.right - wr.left, wh = wr.bottom - wr.top;
-    g_hMainWnd = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"ONRUSH™ — Launcher", style,
+    g_hMainWnd = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"RushLauncher", style,
                                  (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, (GetSystemMetrics(SM_CYSCREEN) - wh) / 2,
                                  ww, wh, nullptr, nullptr, hInstance, nullptr);
     if (!g_hMainWnd) return 1;

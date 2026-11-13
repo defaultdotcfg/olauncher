@@ -1,5 +1,5 @@
 // ============================================================================
-// Launcher update check: asks GitHub for the latest release of defaultdotcfg/olauncher
+// Launcher update check: asks GitHub for the latest release of defaultdotcfg/rushlauncher
 // and compares its tag (vX.Y.Z) with OLAUNCHER_VERSION. Runs on a worker thread and
 // posts WM_UPDATE_RESULT back to the main window. When a newer release exists the user is offered
 // to install it (self_update.inc), or to open its page when the release has no usable zip.
@@ -9,8 +9,8 @@
 #pragma comment(lib, "winhttp.lib")
 #include "version.h"
 
-#define OLAUNCHER_REPO        L"defaultdotcfg/olauncher"
-#define OLAUNCHER_RELEASES    L"https://github.com/defaultdotcfg/olauncher/releases"
+#define OLAUNCHER_REPO        L"defaultdotcfg/rushlauncher"
+#define OLAUNCHER_RELEASES    L"https://github.com/defaultdotcfg/rushlauncher/releases"
 #define WM_UPDATE_RESULT      (WM_USER + 130)
 
 enum UpdateStatus { UPD_LATEST = 0, UPD_NEWER = 1, UPD_NO_RELEASE = 2, UPD_ERROR = 3 };
@@ -20,8 +20,8 @@ struct UpdateResult
     bool manual;               // true = the user pressed the button (show a message box)
     HWND notify;               // window that receives WM_UPDATE_RESULT
     wchar_t tag[64];           // release tag, e.g. v0.2.0
-    wchar_t url[512];          // release page (only github.com/defaultdotcfg/olauncher/...)
-    wchar_t asset[512];        // release zip (only github.com/defaultdotcfg/olauncher/releases/download/...)
+    wchar_t url[512];          // release page (only github.com/defaultdotcfg/rushlauncher/...)
+    wchar_t asset[512];        // release zip (only github.com/defaultdotcfg/rushlauncher/releases/download/...)
     char sha256[65];           // the zip's SHA-256 as published by GitHub ("digest": "sha256:...")
     wchar_t error[128];
 };
@@ -69,7 +69,7 @@ static DWORD WINAPI UpdateCheckThread(LPVOID param)
 {
     UpdateResult *r = (UpdateResult *)param;
     r->status = UPD_ERROR;
-    HINTERNET ses = WinHttpOpen(L"olauncher-update-check/" OLAUNCHER_VERSION, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    HINTERNET ses = WinHttpOpen(L"rushlauncher-update-check/" OLAUNCHER_VERSION, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                 WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     HINTERNET con = ses ? WinHttpConnect(ses, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0) : nullptr;
     HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", L"/repos/" OLAUNCHER_REPO L"/releases/latest", nullptr,

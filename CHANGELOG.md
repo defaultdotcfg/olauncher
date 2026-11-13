@@ -5,6 +5,9 @@
 **Atenção:** a partir desta versão o port mira só a versão final do jogo, **1.80.100.100**. Se a sua cópia for a 1.0.64980.34, o launcher pede a pasta do patch de atualização e aplica as diferenças sozinho (os arquivos do patch são movidos para a pasta do jogo, não copiados).
 
 ### Launcher
+- O projeto agora se chama **rushlauncher**: janela e mensagens com o nome novo, verificação de atualização no repositório `defaultdotcfg/rushlauncher`.
+- Novo ícone no launcher e no `onrush-pc.exe` (o `onrush-pc.exe` de instalações antigas é recriado com o ícone no próximo JOGAR).
+- Logo maior e centralizado no painel lateral, em todas as abas (Playlist e Fotos mostravam só o texto ou nada).
 - **Aba Perfis**: criar, renomear, excluir (vai para a Lixeira) e escolher o perfil salvo. O nome do perfil é o nome do jogador. Dois interruptores por perfil, só em tempo de execução (o save não é alterado):
   - **Desbloquear cosméticos**: libera trajes, manobras, lápides, comemorações, veículos e crashtags do modo online.
   - **Desbloquear tudo (cosméticos e eventos)**: libera também os eventos da carreira.

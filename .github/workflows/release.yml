@@ -48,7 +48,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $pkg = "olauncher-${{ github.ref_name }}"
+          $pkg = "rushlauncher-${{ github.ref_name }}"
           New-Item -ItemType Directory -Force "$pkg/scripts/translator" | Out-Null
           Copy-Item bin/OnRushLauncher.exe, bin/kernelx.dll, bin/combase.dll, bin/EtwPlus.dll, bin/MMDevAPI.dll, bin/d3d12_x.dll $pkg
           Copy-Item bin/translator "$pkg/translator" -Recurse
@@ -72,4 +72,4 @@ jobs:
           $end = ($rest | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
           $notes = if ($end) { $rest[0..($end - 2)] } else { $rest }
           $notes | Set-Content notes.md -Encoding UTF8
-          gh release create $tag "olauncher-$tag.zip" --title "olauncher $tag" --notes-file notes.md
+          gh release create $tag "rushlauncher-$tag.zip" --title "rushlauncher $tag" --notes-file notes.md
