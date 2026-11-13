@@ -10455,13 +10455,13 @@ static HRESULT STDMETHODCALLTYPE HookedCreateGraphicsPipelineStateX(
       modifiedDesc.VS.BytecodeLength  = tv->GetBufferSize();
       { static const bool s_noDepth = GetEnvironmentVariableA("ONRUSH_XLATE_NODEPTH", nullptr, 0) > 0;
         if (s_noDepth) { modifiedDesc.DepthStencilState.DepthEnable = FALSE; modifiedDesc.DepthStencilState.StencilEnable = FALSE;  modifiedDesc.RasterizerState.DepthClipEnable = FALSE; modifiedDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; } }
-      { // Depth-EQUAL passes without depth writes -> GREATER_EQUAL + bias N (default 0; the game uses reversed Z).
-        // 1.80 draws trees with a position-only prepass VS and a different G-buffer VS; their translations do not
-        // give bit-identical depth, so EQUAL dropped the tree G-buffer draws (black silhouettes).
-        // ONRUSH_EQ_DEPTH_STRICT=1 keeps EQUAL; ONRUSH_EQ_DEPTH_BIAS=N sets the bias.
+      { // Depth-EQUAL passes without depth writes stay EQUAL: the G-buffer PS of alpha-tested foliage has no
+        // clip() and relies on EQUAL against the prepass depth to cut the card quads (the old GREATER_EQUAL
+        // workaround drew the whole card, giving dark "cardboard" panels around trees). The prepass and G-buffer
+        // VS now translate to identical positions, so EQUAL no longer drops the tree G-buffer draws.
+        // ONRUSH_EQ_DEPTH_BIAS=N restores the old GREATER_EQUAL + bias N workaround (debug only).
         static int s_eqBias = -2;
-        if (s_eqBias == -2) { char eb[16] = {}; s_eqBias = GetEnvironmentVariableA("ONRUSH_EQ_DEPTH_BIAS", eb, sizeof(eb)) > 0 ? atoi(eb) : 0;
-          if (GetEnvironmentVariableA("ONRUSH_EQ_DEPTH_STRICT", nullptr, 0) > 0) s_eqBias = -1; }
+        if (s_eqBias == -2) { char eb[16] = {}; s_eqBias = GetEnvironmentVariableA("ONRUSH_EQ_DEPTH_BIAS", eb, sizeof(eb)) > 0 ? atoi(eb) : -1; }
         if (s_eqBias >= 0 && modifiedDesc.DepthStencilState.DepthEnable && modifiedDesc.DepthStencilState.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ZERO &&
             modifiedDesc.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_EQUAL) {
           modifiedDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
