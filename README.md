@@ -2,6 +2,8 @@
   <img width="300" height="80" alt="RushLauncher" src="https://github.com/user-attachments/assets/60723459-9d94-48f2-b413-8f5a5d927254" />
 </p>
 
+<h2 align="center">RushLauncher — Port para PC de ONRUSH™</h2>
+
 <p align="center">
   <b>Port não oficial para PC do ONRUSH™ (Xbox One, versão final 1.80.100.100).</b><br>
   Roda o jogo nativamente no Windows x64 com Direct3D 12, a partir da sua própria cópia.
