@@ -1,10 +1,10 @@
-# olauncher — Port para PC de ONRUSH™
+<img width="300" height="80" alt="rush_launcher_white" align="center" src="https://github.com/user-attachments/assets/60723459-9d94-48f2-b413-8f5a5d927254" />
+
+## rushlauncher — Port para PC de ONRUSH™
 
 Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.64980.34)** nativamente no Windows x64 com Direct3D 12.
 
 > **Este repositório não contém nenhum arquivo do jogo.** Nada de executáveis, DLLs do sistema do console, assets, shaders originais ou traduzidos. Para jogar, você precisa da **sua própria cópia** do pacote do jogo. Os shaders traduzidos são gerados na sua máquina a partir dessa cópia.
-
-*English summary below.*
 
 ## O que tem aqui
 
@@ -24,7 +24,7 @@ Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.6498
 - O pacote extraído do jogo (a pasta com `Mount\` e `EmbeddedXvd\`)
 - Só para compilar: Visual Studio 2022 ou mais novo com **Desenvolvimento para desktop com C++**, Windows SDK 10.0.22621 ou mais novo e, para empacotar o tradutor, **Python 3.10+** com `pyinstaller`
 
-## Como jogar (zip da release)
+## Como jogar
 
 1. Extraia o zip da [última release](https://github.com/defaultdotcfg/olauncher/releases/latest) numa pasta (num disco NTFS).
 2. Abra `OnRushLauncher.exe` e aperte **JOGAR**. O launcher pede a pasta da sua cópia do jogo: o pacote extraído, com `Mount\` e `EmbeddedXvd\`.
@@ -35,6 +35,7 @@ Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.6498
    A sua cópia não é alterada. Pela linha de comando: `OnRushLauncher.exe -setup "D:\caminho\do\pacote"`.
 4. **Shaders**: na primeira vez, o JOGAR mostra "Preparando shaders" e abre o jogo algumas vezes sozinho, numa janela pequena e sem som, para ele gravar os shaders que usa. O launcher traduz esses shaders (tradutor embutido em `translator\`, sem Python) e só então abre o jogo de verdade. Isso leva alguns minutos e acontece uma vez só.
 5. Depois, os shaders de menus e pistas que você ainda não tinha visitado são traduzidos quando o jogo fecha (ou no próximo JOGAR). O botão **Pular** do "Preparando shaders" abre o jogo na hora; o que faltou é feito na próxima vez.
+6. O launcher tem função de buscar futuras atualizações e atualizar automaticamente, caso já tenha uma versão do rushlauncher instalado.
 
 ## Como compilar
 
@@ -63,8 +64,13 @@ Para traduzir os shaders sem o launcher (com Python e o Windows SDK): `python sc
 
 ONRUSH é marca da Codemasters/Electronic Arts. Este projeto não é afiliado nem endossado por elas e não distribui conteúdo do jogo.
 
+## NOTAS
+
+##O port está sendo desenvolvido com os seguintes periféricos:
+
+- Ryzen 7 5700
+- NVIDIA RTX 3060 (12GB)
+- 40 GB RAM (DDR4)
+
+Espere em futuras versões melhores otimizações e ajustes de compilação de shaders.
 ---
-
-## English summary
-
-A native Windows x64 / Direct3D 12 port layer and launcher for **ONRUSH (Xbox One 1.0.64980.34)**. The repository contains **no game files**. You need your own copy of the game package; translated shaders are generated locally from the shaders the game dumps while running. Extract the release zip, run `OnRushLauncher.exe` and press JOGAR: it sets the game up from your copy (copies the small files, links the big folders, creates `onrush-pc.exe`), runs the game a few times on its own to record its shaders, translates them with the bundled translator (no Python needed) and then starts the game. Shaders recorded later are translated when the game closes. The launcher checks this repository's latest GitHub release and, if you accept, downloads it, verifies its SHA-256, and updates its own folder and restarts (settings, saves, shaders and game files are kept). To build: `scripts\build.ps1` and `scripts\build_translator.ps1`. Licensed GPL-3.0 (see `THIRD_PARTY.md`).
