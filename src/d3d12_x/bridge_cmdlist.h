@@ -255,7 +255,7 @@ static void DrawListLog(const char* kind, UINT cnt, UINT inst) {
     if (s_cbvPs == (unsigned long long)-1) { char e[40]; s_cbvPs = GetEnvironmentVariableA("ONRUSH_CBV_PS", e, sizeof(e)) > 0 ? _strtoui64(e, nullptr, 16) : 0; }
     if (s_cbvPs && t_lastPso && g_pfnLogCbvDump && (unsigned long long)BcPsoHash(t_lastPso) == s_cbvPs && InterlockedIncrement(&s_cbvN) <= 3) g_pfnLogCbvDump(t_rootCbv);
     static const bool s_panel = GetEnvironmentVariableA("ONRUSH_LOG_PANEL", nullptr, 0) > 0; static volatile LONG s_panelN = 0;
-    const bool panelVp = s_panel && t_lastPso && t_vp0.TopLeftX < 768 && t_vp0.Height <= 768 && ((t_vp0.Width == 768 && t_vp0.Height == 384) || (t_vp0.Width == 384 && t_vp0.Height == 768) || (t_vp0.Width == 768 && t_vp0.Height == 768) || (t_vp0.Width == 384 && t_vp0.Height == 384) || (t_vp0.Width == 1536 && t_vp0.Height == 768)) && InterlockedIncrement(&s_panelN) <= 600;
+    const bool panelVp = s_panel && t_lastPso && t_vp0.TopLeftX < 1536 && t_vp0.Height <= 768 && ((t_vp0.Width == 768 && t_vp0.Height == 384) || (t_vp0.Width == 384 && t_vp0.Height == 768) || (t_vp0.Width == 768 && t_vp0.Height == 768) || (t_vp0.Width == 384 && t_vp0.Height == 384) || (t_vp0.Width == 1536 && t_vp0.Height == 768)) && InterlockedIncrement(&s_panelN) <= 600;
     if ((!g_drawList && !panelVp) || !t_lastPso) return;
     char b[256];   // formats that start with '%' are not capped by the lean-log limit
     sprintf_s(b, "[dl] %s cnt=%u inst=%u vs=%016llx ps=%016llx pso=%p vp=%.0f,%.0f %.0fx%.0f sc=%ld,%ld-%ld,%ld\r\n", kind, cnt, inst,
