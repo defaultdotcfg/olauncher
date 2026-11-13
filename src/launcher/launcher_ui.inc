@@ -28,6 +28,7 @@ static HWND g_hBtnUpdate = nullptr;
 
 static ULONG_PTR g_gdiplusToken = 0;
 static Gdiplus::Bitmap *g_heroArt = nullptr;
+static unsigned g_heroGen = 0;   // bumped on every (re)load of the art: DrawHero rebuilds its scaled copy
 #include "logo_png.h"
 // The logo replaces the "RUSHLAUNCHER" text in the rail. Decoded once from the embedded PNG (the stream must outlive the bitmap).
 static Gdiplus::Bitmap *g_logo = nullptr;
@@ -51,16 +52,32 @@ static void DrawRailBrand(Gdiplus::Graphics &g)
 {
     Gdiplus::FontFamily ff(L"Segoe UI");
     Gdiplus::Font fTag(&ff, 11, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-    Gdiplus::SolidBrush orange(Gdiplus::Color(255, 226, 132, 67)), white(Gdiplus::Color(255, 244, 232, 215));
+    Gdiplus::SolidBrush orange(GPC(COLOR_ACCENT_ORANGE)), white(GPC(COLOR_TEXT_PRIMARY));
     Gdiplus::StringFormat center; center.SetAlignment(Gdiplus::StringAlignmentCenter);
     float lh = 0.f, ly = 34.f;
     if (Gdiplus::Bitmap *logo = LogoBitmap())
     {   // centred in the rail with 8 px margins
-        const float lw = 200.f; lh = lw * (float)LOGO_H / (float)LOGO_W;
-        const Gdiplus::InterpolationMode im = g.GetInterpolationMode();
-        g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-        g.DrawImage(logo, Gdiplus::RectF((216.f - lw) / 2.f, ly, lw, lh));
-        g.SetInterpolationMode(im);
+        const int lw = 200; lh = (float)lw * (float)LOGO_H / (float)LOGO_W;
+        // scaled (and, in the light theme, tinted) once per theme instead of on every paint
+        static Gdiplus::Bitmap *s_scaled = nullptr;
+        static int s_scaledTheme = -1;
+        const int lhi = (int)(lh + 0.5f);
+        if (!s_scaled || s_scaledTheme != (g_pal.dark ? 1 : 0))
+        {
+            delete s_scaled;
+            s_scaled = new Gdiplus::Bitmap(lw, lhi, PixelFormat32bppPARGB);
+            Gdiplus::Graphics sg(s_scaled);
+            sg.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            sg.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+            // the logo is white: in the light theme it is tinted with the text colour
+            Gdiplus::ColorMatrix cm = { {
+                { g_pal.dark ? 1.f : GetRValue(COLOR_TEXT_PRIMARY) / 255.f, 0, 0, 0, 0 }, { 0, g_pal.dark ? 1.f : GetGValue(COLOR_TEXT_PRIMARY) / 255.f, 0, 0, 0 },
+                { 0, 0, g_pal.dark ? 1.f : GetBValue(COLOR_TEXT_PRIMARY) / 255.f, 0, 0 }, { 0, 0, 0, 1, 0 }, { 0, 0, 0, 0, 1 } } };
+            Gdiplus::ImageAttributes ia; ia.SetColorMatrix(&cm);
+            sg.DrawImage(logo, Gdiplus::Rect(0, 0, lw, lhi), 0, 0, (INT)logo->GetWidth(), (INT)logo->GetHeight(), Gdiplus::UnitPixel, &ia);
+            s_scaledTheme = g_pal.dark ? 1 : 0;
+        }
+        g.DrawImage(s_scaled, (216 - lw) / 2, (int)ly, lw, lhi);
     }
     else
     {
@@ -72,6 +89,10 @@ static void DrawRailBrand(Gdiplus::Graphics &g)
 }
 static bool g_vsyncOn = true, g_d3dDebugOn = false, g_verboseOn = false, g_skipIntroOn = false;
 static HWND g_hSkipIntroChk = nullptr;
+#define ID_MINIMIZE_CHK   1023
+#define ID_THEME_COMBO    1031
+static bool g_minimizeOn = false, g_minimizedForGame = false;
+static HWND g_hMinimizeChk = nullptr, g_hThemeCombo = nullptr;
 static bool g_showAdvanced = false, g_showLog = false;
 static bool g_discordOn = true;
 static char g_discordAppId[64] = {};
@@ -103,7 +124,8 @@ enum UiStr {
     S_UPD_CHECK, S_UPD_CHECKING, S_UPD_AVAIL, S_UPD_LATEST, S_UPD_FAIL, S_UPD_NONE, S_UPD_ASK,
     S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL,
     S_HOME_TITLE, S_HOME_HINT, S_INSTALL_TITLE, S_INSTALL_HINT, S_INSTALL_READY, S_INSTALL_MISSING,
-    S_PATCH_ASK, S_PICK_PATCH, S_BAD_PATCH, S_PATCH_CONFIRM, S_PATCH_PROGRESS, S_PATCH_FAIL, S_HOME_PROFILE, S_HOME_PLAYTIME, S_COUNT
+    S_PATCH_ASK, S_PICK_PATCH, S_BAD_PATCH, S_PATCH_CONFIRM, S_PATCH_PROGRESS, S_PATCH_FAIL, S_HOME_PROFILE, S_HOME_PLAYTIME,
+    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -200,6 +222,11 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Não foi possível aplicar o patch: %ls.", L"Could not apply the patch: %ls.", L"No se pudo aplicar el parche: %ls." },
     { L"Perfil", L"Profile", L"Perfil" },
     { L"Tempo de jogo", L"Play time", L"Tiempo de juego" },
+    { L"Minimizar o launcher ao jogar", L"Minimize the launcher while playing", L"Minimizar el launcher al jugar" },
+    { L"Tema do launcher", L"Launcher theme", L"Tema del launcher" },
+    { L"Escuro", L"Dark", L"Oscuro" },
+    { L"Claro", L"Light", L"Claro" },
+    { L"Configurações", L"Settings", L"Configuración" },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
 
@@ -241,7 +268,7 @@ static void LoadHeroArt(const wchar_t *gameDir)
             swprintf_s(p, MAX_PATH, L"%ls%ls\\SplashScreen.png", d, s);
             if (GetFileAttributesW(p) == INVALID_FILE_ATTRIBUTES) continue;
             Gdiplus::Bitmap *b = Gdiplus::Bitmap::FromFile(p);
-            if (b && b->GetLastStatus() == Gdiplus::Ok) { g_heroArt = b; return; }
+            if (b && b->GetLastStatus() == Gdiplus::Ok) { g_heroArt = b; ++g_heroGen; return; }
             delete b;
         }
     }
@@ -366,6 +393,7 @@ static void LayoutLog(HWND hwnd)
 #include "playlist_ui.inc"
 #include "profiles_ui.inc"
 #include "photos_ui.inc"
+#include "controls_ui.inc"
 
 static void DrawHero(HDC hdc)
 {
@@ -373,38 +401,56 @@ static void DrawHero(HDC hdc)
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
     g.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
-    Gdiplus::SolidBrush bg(Gdiplus::Color(255, 18, 14, 11));
+    Gdiplus::SolidBrush bg(GPC(COLOR_BG_MAIN));
     g.FillRectangle(&bg, 0, 0, UI_HERO_W, UI_H);
-    if (g_heroArt)
+    // Playlist, Fotos and Controles cover the art completely: skip it there.
+    if (g_heroArt && g_tab != 1 && g_tab != 4 && g_tab != 5)
     {
         // Keep the art in the content column; the left 216 px are reserved for navigation.
-        float iw = (float)g_heroArt->GetWidth(), ih = (float)g_heroArt->GetHeight();
-        float artW = (float)UI_HERO_W - 216.f;
-        float sc = max(artW / iw, (float)UI_H / ih);
-        float dw = iw * sc, dh = ih * sc;
-        g.DrawImage(g_heroArt, Gdiplus::RectF(216.f + (artW - dw) / 2.f, ((float)UI_H - dh) / 2.f, dw, dh));
+        // Scaled once (bicubic from 1920x1080 cost ~60 ms per paint, and every toggle repaints the window).
+        static Gdiplus::Bitmap *s_scaled = nullptr;
+        static unsigned s_scaledGen = 0;
+        const int artW = UI_HERO_W - 216;
+        if (s_scaledGen != g_heroGen || !s_scaled)
+        {
+            delete s_scaled;
+            s_scaled = new Gdiplus::Bitmap(artW, UI_H, PixelFormat32bppPARGB);
+            Gdiplus::Graphics sg(s_scaled);
+            sg.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            sg.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+            float iw = (float)g_heroArt->GetWidth(), ih = (float)g_heroArt->GetHeight();
+            float sc = max((float)artW / iw, (float)UI_H / ih);
+            float dw = iw * sc, dh = ih * sc;
+            sg.DrawImage(g_heroArt, Gdiplus::RectF(((float)artW - dw) / 2.f, ((float)UI_H - dh) / 2.f, dw, dh));
+            s_scaledGen = g_heroGen;
+        }
+        Gdiplus::InterpolationMode im = g.GetInterpolationMode();
+        g.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+        g.DrawImage(s_scaled, 216, 0, artW, UI_H);
+        g.SetInterpolationMode(im);
     }
-    Gdiplus::SolidBrush railBase(Gdiplus::Color(255, 18, 14, 11));
+    Gdiplus::SolidBrush railBase(GPC(COLOR_BG_MAIN));
     g.FillRectangle(&railBase, 0, 0, 216, UI_H);
     if (g_tab == 1) { PlDrawHero(g); return; }
     if (g_tab == 4) { PhDrawHero(g); DrawRailBrand(g); return; }
+    if (g_tab == 5) { KbDrawHero(g); DrawRailBrand(g); return; }
     if (g_showLog)
     {
-        Gdiplus::SolidBrush dim(Gdiplus::Color(235, 15, 12, 10));
+        Gdiplus::SolidBrush dim(GPCA(235, COLOR_BG_LOG));
         g.FillRectangle(&dim, 0, 0, UI_HERO_W, UI_H);
         return;
     }
     Gdiplus::LinearGradientBrush fade(Gdiplus::Point(216, UI_H - 230), Gdiplus::Point(216, UI_H),
-                                      Gdiplus::Color(0, 18, 14, 11), Gdiplus::Color(245, 18, 14, 11));
+                                      GPCA(0, COLOR_BG_MAIN), GPCA(245, COLOR_BG_MAIN));
     fade.SetWrapMode(Gdiplus::WrapModeTileFlipXY);  // default tiling paints a dark seam on the first row
     g.FillRectangle(&fade, 216, UI_H - 229, UI_HERO_W - 216, 229);
 
     Gdiplus::FontFamily ff(L"Segoe UI");
     Gdiplus::Font fStatus(&ff, 20, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
     Gdiplus::Font fSmall(&ff, 12, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-    Gdiplus::SolidBrush orange(Gdiplus::Color(255, 226, 132, 67)), white(Gdiplus::Color(255, 244, 232, 215)),
-        muted(Gdiplus::Color(255, 181, 160, 139)), green(Gdiplus::Color(255, 145, 195, 133)), red(Gdiplus::Color(255, 220, 86, 62));
-    Gdiplus::SolidBrush rail(Gdiplus::Color(255, 18, 14, 11));
+    Gdiplus::SolidBrush orange(GPC(COLOR_ACCENT_ORANGE)), white(GPC(COLOR_TEXT_PRIMARY)),
+        muted(GPC(COLOR_TEXT_MUTED)), green(GPC(COLOR_ACCENT_GREEN)), red(GPC(COLOR_ACCENT_RED));
+    Gdiplus::SolidBrush rail(GPC(COLOR_BG_MAIN));
     g.FillRectangle(&rail, 0, 0, 216, UI_H);
     DrawRailBrand(g);
     g.DrawString(T(S_GAMEDIR), -1, &fSmall, Gdiplus::PointF(24, 470), &muted);
@@ -426,25 +472,23 @@ static void DrawPanel(HDC hdc)
 
     if (g_tab == 0)
     {
-        RECT card = { UI_PANEL_X, 24, UI_PANEL_X + UI_PANEL_W, 300 };
-        FillRound(hdc, card, 14, RGB(52, 36, 26), COLOR_BORDER);
-        SelectObject(hdc, g_hFontPlay); SetTextColor(hdc, COLOR_TEXT_PRIMARY);
-        const wchar_t *homeTitle = T(S_HOME_TITLE);
-        TextOutW(hdc, UI_PANEL_X + 22, 52, homeTitle, (int)wcslen(homeTitle));
-        SelectObject(hdc, g_hFontUI); SetTextColor(hdc, COLOR_TEXT_MUTED);
+        RECT card = { UI_PANEL_X, 64, UI_PANEL_X + UI_PANEL_W, 250 };
+        FillRound(hdc, card, 14, g_pal.homeCard, COLOR_BORDER);
+        SelectObject(hdc, g_hFontUIBold); SetTextColor(hdc, COLOR_TEXT_PRIMARY);
         const wchar_t *st = g_gameRunning ? T(S_RUNNING) : (g_gameDirOk ? T(S_READY) : T(S_NOTFOUND));
-        TextOutW(hdc, UI_PANEL_X + 22, 94, st, (int)wcslen(st));
+        TextOutW(hdc, UI_PANEL_X + 22, 90, st, (int)wcslen(st));
+        SelectObject(hdc, g_hFontUI); SetTextColor(hdc, COLOR_TEXT_MUTED);
         const wchar_t *homeHint = T(S_HOME_HINT);
-        TextOutW(hdc, UI_PANEL_X + 22, 126, homeHint, (int)wcslen(homeHint));
+        TextOutW(hdc, UI_PANEL_X + 22, 120, homeHint, (int)wcslen(homeHint));
         {   // profile in use + play time (Perfis tab)
             wchar_t line[160];
             ULONGLONG secs = ProfPlaySeconds(g_config.playerName);
             if (g_gameRunning && g_playStartTick) secs += (GetTickCount64() - g_playStartTick) / 1000;
             SetTextColor(hdc, COLOR_TEXT_PRIMARY);
             swprintf_s(line, L"%ls: %ls", T(S_HOME_PROFILE), g_config.playerName);
-            TextOutW(hdc, UI_PANEL_X + 22, 182, line, (int)wcslen(line));
+            TextOutW(hdc, UI_PANEL_X + 22, 172, line, (int)wcslen(line));
             swprintf_s(line, L"%ls: %ls", T(S_HOME_PLAYTIME), ProfFmtPlay(secs).c_str());
-            TextOutW(hdc, UI_PANEL_X + 22, 208, line, (int)wcslen(line));
+            TextOutW(hdc, UI_PANEL_X + 22, 198, line, (int)wcslen(line));
             SetTextColor(hdc, COLOR_TEXT_MUTED);
         }
         // game folder (was the "Instalação" tab): "…" picks the copy and, when it is not final, the patch
@@ -459,6 +503,7 @@ static void DrawPanel(HDC hdc)
     }
     if (g_tab == 3) { ProfDrawPanel(hdc); return; }
     if (g_tab == 4) { PhDrawPanel(hdc); return; }
+    if (g_tab == 5) { KbDrawPanel(hdc); return; }
 
     SelectObject(hdc, g_hFontPlay);
     SetTextColor(hdc, COLOR_TEXT_PRIMARY);
@@ -468,7 +513,7 @@ static void DrawPanel(HDC hdc)
     const int half = (UI_PANEL_W - 12) / 2, X2 = UI_PANEL_X + half + 12;
     struct { int x, y; const wchar_t *t; } labels[] = {
         { UI_PANEL_X, 58, T(S_RES) }, { X2, 58, T(S_MODE) }, { UI_PANEL_X, 120, T(S_TEXTLANG) }, { X2, 120, T(S_VOICELANG) },
-        { UI_PANEL_X, 256, T(S_PHOTO) }, { UI_PANEL_X, 320, T(S_SAVEDIR) } };
+        { UI_PANEL_X, 256, T(S_PHOTO) }, { X2, 256, T(S_THEME) }, { UI_PANEL_X, 320, T(S_SAVEDIR) } };
     for (auto &l : labels) TextOutW(hdc, l.x, l.y, l.t, (int)wcslen(l.t));
 
     // input boxes behind the borderless edits
@@ -485,7 +530,7 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
     bool disabled = (di->itemState & ODS_DISABLED) != 0;
     wchar_t text[128] = {};
     GetWindowTextW(di->hwndItem, text, 128);
-    bool isNav = id == ID_TAB_HOME || id == ID_TAB_SETTINGS || id == ID_TAB_PLAYLIST || id == ID_TAB_SETUP || id == ID_TAB_PHOTOS;
+    bool isNav = id == ID_TAB_HOME || id == ID_TAB_SETTINGS || id == ID_TAB_PLAYLIST || id == ID_TAB_SETUP || id == ID_TAB_PHOTOS || id == ID_TAB_CONTROLS;
     HBRUSH ownerBg = isNav ? CreateSolidBrush(COLOR_BG_MAIN) : g_hBrushCard;
     FillRect(hdc, &r, ownerBg);
     if (isNav) DeleteObject(ownerBg);
@@ -494,10 +539,9 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
     if (isNav)
     {
         bool active = (id == ID_TAB_HOME && g_tab == 0) || (id == ID_TAB_PLAYLIST && g_tab == 1) ||
-                      (id == ID_TAB_SETTINGS && g_tab == 2) || (id == ID_TAB_SETUP && g_tab == 3) || (id == ID_TAB_PHOTOS && g_tab == 4);
-        HBRUSH nav = CreateSolidBrush(active ? RGB(51, 36, 27) : RGB(18, 14, 11));
-        FillRound(hdc, r, 8, active ? RGB(51, 36, 27) : RGB(18, 14, 11), active ? COLOR_BORDER : RGB(18, 14, 11));
-        DeleteObject(nav);
+                      (id == ID_TAB_SETTINGS && g_tab == 2) || (id == ID_TAB_SETUP && g_tab == 3) || (id == ID_TAB_PHOTOS && g_tab == 4) ||
+                      (id == ID_TAB_CONTROLS && g_tab == 5);
+        FillRound(hdc, r, 8, active ? g_pal.navActive : COLOR_BG_MAIN, active ? COLOR_BORDER : COLOR_BG_MAIN);
         SelectObject(hdc, active ? g_hFontUIBold : g_hFontUI);
         SetTextColor(hdc, active ? COLOR_TEXT_PRIMARY : COLOR_TEXT_MUTED);
         RECT rt = r; rt.left += 16; rt.bottom -= 2;
@@ -509,12 +553,12 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
         }
         return;
     }
-    bool isToggle = (id == ID_PL_ENABLE || id == ID_PL_SHUFFLE || id == ID_VSYNC_CHK || id == ID_DISCORD_CHK || id == ID_D3DDEBUG_CHK || id == ID_VERBOSE_CHK || id == ID_SKIPINTRO_CHK || id == ID_BTN_ADVANCED || id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL);
+    bool isToggle = (id == ID_PL_ENABLE || id == ID_PL_SHUFFLE || id == ID_VSYNC_CHK || id == ID_DISCORD_CHK || id == ID_D3DDEBUG_CHK || id == ID_VERBOSE_CHK || id == ID_SKIPINTRO_CHK || id == ID_BTN_ADVANCED || id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL || id == ID_MINIMIZE_CHK);
     if (isToggle)
     {
         bool on = id == ID_PL_ENABLE ? g_config.musicEnabled != 0 : id == ID_PL_SHUFFLE ? g_config.musicShuffle != 0 :
                   id == ID_VSYNC_CHK ? g_vsyncOn : id == ID_DISCORD_CHK ? g_discordOn : id == ID_D3DDEBUG_CHK ? g_d3dDebugOn :
-                  id == ID_VERBOSE_CHK ? g_verboseOn : id == ID_SKIPINTRO_CHK ? g_skipIntroOn : (id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL) ? ProfUnlockSwitchOn(id) : g_showAdvanced;
+                  id == ID_VERBOSE_CHK ? g_verboseOn : id == ID_SKIPINTRO_CHK ? g_skipIntroOn : id == ID_MINIMIZE_CHK ? g_minimizeOn : (id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL) ? ProfUnlockSwitchOn(id) : g_showAdvanced;
         if (id == ID_BTN_ADVANCED)
         {   // disclosure row
             SelectObject(hdc, g_hFontUI);
@@ -526,10 +570,10 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
         // switch: track 36x20 on the right, label on the left
         RECT tr = { r.right - 38, r.top + (r.bottom - r.top - 20) / 2, r.right - 2, 0 };
         tr.bottom = tr.top + 20;
-        FillRound(hdc, tr, 20, on ? COLOR_ACCENT_ORANGE : RGB(58, 64, 74), on ? COLOR_ACCENT_ORANGE : RGB(58, 64, 74));
+        FillRound(hdc, tr, 20, on ? COLOR_ACCENT_ORANGE : g_pal.toggleOff, on ? COLOR_ACCENT_ORANGE : g_pal.toggleOff);
         RECT knob = on ? RECT{ tr.right - 18, tr.top + 2, tr.right - 2, tr.bottom - 2 }
                        : RECT{ tr.left + 2, tr.top + 2, tr.left + 18, tr.bottom - 2 };
-        FillRound(hdc, knob, 16, RGB(245, 245, 245), RGB(245, 245, 245));
+        FillRound(hdc, knob, 16, g_pal.knob, g_pal.knob);
         SelectObject(hdc, g_hFontUI);
         SetTextColor(hdc, COLOR_TEXT_PRIMARY);
         RECT rt = r; rt.right = tr.left - 8;
@@ -541,17 +585,18 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
     COLORREF fill, border, fg = COLOR_TEXT_PRIMARY;
     if (primary)
     {
+        fg = g_pal.onAccent;
         fill = g_gameRunning ? COLOR_ACCENT_RED : COLOR_ACCENT_ORANGE;
-        if (pressed) fill = g_gameRunning ? RGB(184, 66, 49) : RGB(194, 103, 50);
-        if (disabled) { fill = RGB(74, 58, 45); fg = COLOR_TEXT_MUTED; }
+        if (pressed) fill = g_gameRunning ? g_pal.closePressed : g_pal.launchPressed;
+        if (disabled) { fill = g_pal.disabledFill; fg = COLOR_TEXT_MUTED; }
         border = fill;
     }
     else
     {
-        fill = pressed ? RGB(63, 45, 33) : RGB(49, 35, 26);
+        fill = pressed ? g_pal.btnPressed : g_pal.btnFill;
         border = COLOR_BORDER;
         if (disabled) fg = COLOR_TEXT_MUTED;
-        if (id == ID_BTN_UPDATE && g_updateKnown && g_updateLast.status == UPD_NEWER) { border = COLOR_ACCENT_ORANGE; fg = RGB(239, 164, 103); }
+        if (id == ID_BTN_UPDATE && g_updateKnown && g_updateLast.status == UPD_NEWER) { border = COLOR_ACCENT_ORANGE; fg = g_pal.accentText; }
     }
     FillRound(hdc, r, primary ? 12 : 8, fill, border);
     SelectObject(hdc, primary ? g_hFontPlay : g_hFontUI);
@@ -565,10 +610,10 @@ static void DrawComboItem(const DRAWITEMSTRUCT *di)
     wchar_t text[128] = {};
     SendMessageW(di->hwndItem, CB_GETLBTEXT, di->itemID, (LPARAM)text);
     bool sel = (di->itemState & ODS_SELECTED) && !(di->itemState & ODS_COMBOBOXEDIT);
-    HBRUSH b = CreateSolidBrush(sel ? RGB(66, 44, 31) : COLOR_BG_INPUT);
+    HBRUSH b = CreateSolidBrush(sel ? g_pal.comboSel : COLOR_BG_INPUT);
     FillRect(di->hDC, &di->rcItem, b); DeleteObject(b);
     SetBkMode(di->hDC, TRANSPARENT);
-    SetTextColor(di->hDC, sel ? RGB(239, 164, 103) : COLOR_TEXT_PRIMARY);
+    SetTextColor(di->hDC, sel ? g_pal.accentText : COLOR_TEXT_PRIMARY);
     SelectObject(di->hDC, g_hFontUI);
     RECT r = di->rcItem; r.left += 10;
     DrawTextW(di->hDC, text, -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -608,6 +653,8 @@ static void ReadUiIntoConfig()
     g_config.d3d12Debug = g_d3dDebugOn ? 1 : 0;
     g_config.verboseLog = g_verboseOn ? 1 : 0;
     g_config.skipIntro = g_skipIntroOn ? 1 : 0;
+    g_config.minimizeOnPlay = g_minimizeOn ? 1 : 0;
+    wcscpy_s(g_config.theme, 8, g_pal.dark ? L"dark" : L"light");
     wcscpy_s(g_config.photoFormat, 8, SendMessageW(g_hPhotoFmtCombo, CB_GETCURSEL, 0, 0) == 1 ? L"jpg" : L"png");
     wcscpy_s(g_config.uiLang, 8, kUiLangCodes[g_uiLang]);
     ReadGameLangCombo(g_hTextLangCombo, g_config.textLang, 16);
@@ -662,6 +709,12 @@ static void ApplyUiLanguage(HWND hwnd)
     SendMessageW(g_hPhotoFmtCombo, CB_ADDSTRING, 0, (LPARAM)T(S_PHOTO_JPG));
     SendMessageW(g_hPhotoFmtCombo, CB_SETCURSEL, photoSel, 0);
 
+    SendMessageW(g_hThemeCombo, CB_RESETCONTENT, 0, 0);
+    SendMessageW(g_hThemeCombo, CB_ADDSTRING, 0, (LPARAM)T(S_THEME_DARK));
+    SendMessageW(g_hThemeCombo, CB_ADDSTRING, 0, (LPARAM)T(S_THEME_LIGHT));
+    SendMessageW(g_hThemeCombo, CB_SETCURSEL, g_pal.dark ? 0 : 1, 0);
+    SetWindowTextW(g_hMinimizeChk, T(S_MINIMIZE));
+
     SetWindowTextW(g_hVsyncChk, T(S_VSYNC));
     SetWindowTextW(g_hSkipIntroChk, T(S_SKIP));
     SetWindowTextW(g_hAdvBtn, T(S_ADV));
@@ -676,12 +729,34 @@ static void ApplyUiLanguage(HWND hwnd)
     if (g_hTabSettings) PlApplyLanguage();
     if (g_hProfList) ProfApplyLanguage();
     if (g_hPhList) PhApplyLanguage();
+    if (g_hKbList) KbApplyLanguage();
     InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 #include "shader_prep.inc"
 
 #define TIMER_PLAYTIME    0x7702
+#define TIMER_DISCORD     0x7703
+static long long g_discordStart = 0;   // game start (epoch seconds) shown as "elapsed" in Discord
+static bool g_discordShown = false;     // activity accepted by Discord for this game session
+static std::string g_discordLastErr;    // last failure already logged (logged once per change)
+
+// Discord Rich Presence while the game runs: (re)connects every 15 s until Discord accepts the activity, so it also works
+// when Discord is opened (or restarted) after the game. Every failure reason is written to the launcher log once.
+static void DiscordUpdate()
+{
+    if (!g_discordOn || !g_gameRunning) return;
+    if (g_discordShown && g_discord.Alive()) return;
+    g_discordShown = false;
+    bool ok = g_discord.Connect(g_discordAppId) && g_discord.SetPlaying(g_discordStart);
+    if (ok) { g_discordShown = true; g_discordLastErr.clear(); LogPrintf(L"[Discord] Rich Presence ativo\r\n"); return; }
+    if (g_discord.lastError != g_discordLastErr)
+    {
+        g_discordLastErr = g_discord.lastError;
+        wchar_t w[512] = {}; MultiByteToWideChar(CP_UTF8, 0, g_discordLastErr.c_str(), -1, w, 511);
+        LogPrintf(L"[Discord] Rich Presence: %ls (tentando de novo a cada 15 s)\r\n", w);
+    }
+}
 static bool g_prepLaunch = true;      // start the game when the preparation finishes
 
 // preparation (packs -> translate + compile -> pipelines, shader_prep.inc); WM_SHADER_PREP_DONE starts the game if launch is set
@@ -693,15 +768,42 @@ static void BeginShaderPrep(HWND hwnd, bool launch)
     StartShaderPrep(hwnd, g_gameDirShown);
 }
 
+static void CreateThemeBrushes()
+{
+    HBRUSH old[] = { g_hBrushMain, g_hBrushCard, g_hBrushInput, g_hBrushLog };
+    g_hBrushMain = CreateSolidBrush(COLOR_BG_MAIN);
+    g_hBrushCard = CreateSolidBrush(COLOR_BG_CARD);
+    g_hBrushInput = CreateSolidBrush(COLOR_BG_INPUT);
+    g_hBrushLog = CreateSolidBrush(COLOR_BG_LOG);
+    for (HBRUSH b : old) if (b) DeleteObject(b);
+}
+
+// Switches the launcher between the dark and the light palette while it runs.
+static void ApplyTheme(HWND hwnd, bool dark)
+{
+    g_pal = dark ? kPaletteDark : kPaletteLight;
+    CreateThemeBrushes();
+    BOOL d = dark ? TRUE : FALSE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d, sizeof(d));
+    HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hThemeCombo, g_hPlCombo };
+    for (HWND c : combos) if (c) SetWindowTheme(c, dark ? L"DarkMode_CFD" : L"CFD", nullptr);
+    HWND lists[] = { g_hLogEdit, g_hProfList, g_hPhList, g_hKbList, g_hPlList };
+    for (HWND l : lists) if (l) SetWindowTheme(l, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    PhApplyThemeColors();
+    KbApplyThemeColors();
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+}
+
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_NOTIFY && PhHandleNotify(hwnd, (NMHDR *)lParam)) return 0;
+    if (msg == WM_NOTIFY && KbHandleNotify(hwnd, (NMHDR *)lParam)) return 0;
     if (g_hTabSettings) { LRESULT plr = 0; if (PlHandleMessage(hwnd, msg, wParam, lParam, &plr)) return plr; }
     switch (msg)
     {
     case WM_CREATE:
     {
-        BOOL dark = TRUE;
+        BOOL dark = g_pal.dark ? TRUE : FALSE;
         DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
         auto mk = [](int h, int w, const wchar_t *face) {
             return CreateFontW(-h, 0, 0, 0, w, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -717,6 +819,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         if (g_config.gamePath[0] == L'\0') wcscpy_s(g_config.gamePath, MAX_PATH, initialGameDir);
         LoadDiscordIni();
         g_vsyncOn = g_config.vsync != 0; g_d3dDebugOn = g_config.d3d12Debug != 0; g_verboseOn = g_config.verboseLog != 0; g_skipIntroOn = g_config.skipIntro != 0;
+        g_minimizeOn = g_config.minimizeOnPlay != 0;
 
         g_uiLang = 0;
         for (int i = 0; i < 3; ++i) if (_wcsicmp(g_config.uiLang, kUiLangCodes[i]) == 0) g_uiLang = i;
@@ -738,13 +841,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_hTextLangCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 140, HALF, 300, hwnd, (HMENU)ID_TEXTLANG_COMBO, nullptr, nullptr);
         g_hVoiceLangCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 140, HALF, 300, hwnd, (HMENU)ID_VOICELANG_COMBO, nullptr, nullptr);
         g_hPhotoFmtCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 276, HALF, 200, hwnd, (HMENU)ID_PHOTOFMT_COMBO, nullptr, nullptr);
-        HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo };
-        for (HWND c : combos) SetWindowTheme(c, L"DarkMode_CFD", nullptr);
+        g_hThemeCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 276, HALF, 200, hwnd, (HMENU)ID_THEME_COMBO, nullptr, nullptr);
+        HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hThemeCombo };
+        for (HWND c : combos) SetWindowTheme(c, g_pal.dark ? L"DarkMode_CFD" : L"CFD", nullptr);
 
         DWORD od = WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_OWNERDRAW;
         g_hVsyncChk = CreateWindowW(L"BUTTON", L"", od, X, 178, W, 24, hwnd, (HMENU)ID_VSYNC_CHK, nullptr, nullptr);
         g_hDiscordChk = CreateWindowW(L"BUTTON", L"Discord Rich Presence", od, X, 202, W, 24, hwnd, (HMENU)ID_DISCORD_CHK, nullptr, nullptr);
         g_hSkipIntroChk = CreateWindowW(L"BUTTON", L"", od, X, 226, W, 24, hwnd, (HMENU)ID_SKIPINTRO_CHK, nullptr, nullptr);
+        g_hMinimizeChk = CreateWindowW(L"BUTTON", L"", od, X, 388, W, 24, hwnd, (HMENU)ID_MINIMIZE_CHK, nullptr, nullptr);
 
         DWORD es = WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL;
         g_hPlayerEdit = CreateWindowW(L"EDIT", g_config.playerName, es & ~WS_VISIBLE, X + 10, 283, HALF - 20, 20, hwnd, (HMENU)ID_PLAYER_EDIT, nullptr, nullptr);
@@ -767,7 +872,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         // log overlay (over the art), hidden until "Ver log"
         g_hLogEdit = CreateWindowW(L"EDIT", L"", WS_CHILD | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
                                    24, 24, UI_HERO_W - 48, UI_H - 92, hwnd, (HMENU)ID_LOG_EDIT, nullptr, nullptr);
-        SetWindowTheme(g_hLogEdit, L"DarkMode_Explorer", nullptr);
+        SetWindowTheme(g_hLogEdit, g_pal.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
         g_hClearLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 24, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_CLEAR_LOG, nullptr, nullptr);
         g_hCopyLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 122, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_COPY_LOG, nullptr, nullptr);
         g_hBtnKill = nullptr;
@@ -775,6 +880,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         PlCreateControls(hwnd);
         ProfCreateControls(hwnd);
         PhCreateControls(hwnd);
+        KbCreateControls(hwnd);
 
         EnumChildWindows(hwnd, [](HWND h, LPARAM) -> BOOL {
             SendMessageW(h, WM_SETFONT, (WPARAM)(GetDlgCtrlID(h) == ID_LOG_EDIT ? g_hFontLog : g_hFontUI), TRUE);
@@ -861,11 +967,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         SetLaunchButtonState();
         g_playStartTick = GetTickCount64(); g_playProfile = g_config.playerName;
         SetTimer(hwnd, TIMER_PLAYTIME, 60000, nullptr);  // keeps the play time on the home card current
-        if (g_discordOn)
-        {
-            bool ok = g_discord.Connect(g_discordAppId) && g_discord.SetPlaying((long long)time(nullptr));
-            LogPrintf(L"[Discord] Rich Presence: %ls\r\n", ok ? L"ativo" : L"Discord não encontrado (o app do Discord precisa estar aberto)");
-        }
+        if (g_minimizeOn && !IsIconic(hwnd)) { g_minimizedForGame = true; ShowWindow(hwnd, SW_MINIMIZE); }
+        g_discordStart = (long long)time(nullptr); g_discordShown = false; g_discordLastErr.clear();
+        DiscordUpdate();
+        SetTimer(hwnd, TIMER_DISCORD, 15000, nullptr);
         return 0;
 
     case WM_SHADER_PREP_DONE:
@@ -877,6 +982,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
 
     case WM_TIMER:
+        if (wParam == KB_TIMER_ID) { KbOnTimer(hwnd); return 0; }
+        if (wParam == TIMER_DISCORD) { DiscordUpdate(); return 0; }
         if (wParam == TIMER_PLAYTIME) { if (g_tab == 0) InvalidateRect(hwnd, nullptr, FALSE); return 0; }
         break;
 
@@ -955,6 +1062,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_GAME_EXITED:
         g_gameRunning = false;
+        if (g_minimizedForGame)
+        {   // minimized by "Minimizar o launcher ao jogar": back when the game closes
+            g_minimizedForGame = false;
+            if (IsIconic(hwnd)) { ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); }
+        }
         if (g_playStartTick)
         {
             ULONGLONG secs = (GetTickCount64() - g_playStartTick) / 1000;
@@ -964,6 +1076,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             KillTimer(hwnd, TIMER_PLAYTIME);
         }
         SetLaunchButtonState();
+        KillTimer(hwnd, TIMER_DISCORD);
+        g_discordShown = false;
         g_discord.Clear();
         g_discord.Close();
         // a shader the packs did not have (the bridge dumps any it meets) gets translated now, so the next JOGAR starts right away
@@ -983,6 +1097,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         int code = HIWORD(wParam);
         if (ProfHandleCommand(hwnd, id, code)) return 0;
         if (PhHandleCommand(hwnd, id, code)) return 0;
+        if (KbHandleCommand(hwnd, id, code)) return 0;
         switch (id)
         {
         case ID_BTN_LAUNCH:
@@ -1018,12 +1133,20 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case ID_VSYNC_CHK: g_vsyncOn = !g_vsyncOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_DISCORD_CHK:
             g_discordOn = !g_discordOn; InvalidateRect((HWND)lParam, nullptr, TRUE); SaveIni();
-            if (!g_discordOn) { g_discord.Clear(); g_discord.Close(); }
-            else if (g_gameRunning && g_discord.Connect(g_discordAppId)) g_discord.SetPlaying((long long)time(nullptr));
+            if (!g_discordOn) { g_discord.Clear(); g_discord.Close(); g_discordShown = false; }
+            else { g_discordLastErr.clear(); DiscordUpdate(); }
             return 0;
         case ID_D3DDEBUG_CHK: g_d3dDebugOn = !g_d3dDebugOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_VERBOSE_CHK: g_verboseOn = !g_verboseOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_SKIPINTRO_CHK: g_skipIntroOn = !g_skipIntroOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
+        case ID_MINIMIZE_CHK: g_minimizeOn = !g_minimizeOn; InvalidateRect((HWND)lParam, nullptr, TRUE); ReadUiIntoConfig(); SaveIni(); return 0;
+        case ID_THEME_COMBO:
+            if (code == CBN_SELCHANGE)
+            {
+                bool dark = SendMessageW(g_hThemeCombo, CB_GETCURSEL, 0, 0) != 1;
+                if (dark != g_pal.dark) { ApplyTheme(hwnd, dark); ReadUiIntoConfig(); SaveIni(); }
+            }
+            return 0;
         case ID_BTN_UPDATE:
             if (g_updateKnown && g_updateLast.status == UPD_NEWER && !g_updateChecking)
             {
@@ -1180,10 +1303,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     Gdiplus::GdiplusStartupInput gsi;
     Gdiplus::GdiplusStartup(&g_gdiplusToken, &gsi, nullptr);
 
-    g_hBrushMain = CreateSolidBrush(COLOR_BG_MAIN);
-    g_hBrushCard = CreateSolidBrush(COLOR_BG_CARD);
-    g_hBrushInput = CreateSolidBrush(COLOR_BG_INPUT);
-    g_hBrushLog = CreateSolidBrush(COLOR_BG_LOG);
+    g_pal = _wcsicmp(g_config.theme, L"light") == 0 ? kPaletteLight : kPaletteDark;
+    CreateThemeBrushes();
 
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.lpfnWndProc = MainWndProc;

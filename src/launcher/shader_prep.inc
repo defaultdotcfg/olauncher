@@ -499,7 +499,7 @@ static void PaintPrepWindow(HWND hwnd, HDC hdc)
     TextOutW(hdc, 24, 42, what, (int)wcslen(what));
 
     RECT bar = { 24, 76, rc.right - 24, 86 };
-    FillRound(hdc, bar, 10, RGB(48, 54, 64), RGB(48, 54, 64));
+    FillRound(hdc, bar, 10, g_pal.track, g_pal.track);
     if (p > 0)
     {
         RECT f = bar;

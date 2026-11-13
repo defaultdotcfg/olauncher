@@ -11,6 +11,11 @@
 - **Aba Perfis**: criar, renomear, excluir (vai para a Lixeira) e escolher o perfil salvo. O nome do perfil é o nome do jogador. Dois interruptores por perfil, só em tempo de execução (o save não é alterado):
   - **Desbloquear cosméticos**: libera trajes, manobras, lápides, comemorações, veículos e crashtags do modo online.
   - **Desbloquear tudo (cosméticos e eventos)**: libera também os eventos da carreira.
+- **Aba Controles**: troca das teclas que fazem o papel do controle de Xbox no teclado. São duas teclas por ação (acelerar, frear, direção, direcional, botões A/B/X/Y, LB/RB, View, Menu, L3/R3 e analógico direito), com opção de limpar e de voltar ao padrão. O mapeamento fica salvo no `onrush.ini` e vale no próximo JOGAR. Teclas opostas apertadas juntas (esquerda e direita, por exemplo) se anulam, em vez de valer a última.
+- O direcional do teclado agora tem teclas próprias (1, 2, 3 e 4). Antes, W, S, A, D e as setas também apertavam o direcional, e acelerar com W abria a lista de provocações na corrida.
+- **Tema claro e escuro**: escolha em Configurações → Tema do launcher. A troca é na hora e vale também para a janela de preparo dos shaders.
+- **Discord Rich Presence**: o launcher tentava conectar só no instante em que o jogo abria. Agora tenta de novo a cada 15 s enquanto o jogo roda, então funciona com o Discord aberto depois do jogo ou reiniciado no meio. Se o Discord recusar a conexão ou a atividade, o motivo fica no log do launcher.
+- **Minimizar o launcher ao jogar** (Configurações): o launcher minimiza quando o jogo abre e volta quando o jogo fecha.
 - **Aba Fotos**: galeria das fotos tiradas no jogo (F12), com marcação de várias fotos, Marcar/Desmarcar todas, abrir foto, excluir marcadas (Lixeira) e abrir a pasta.
 - A aba Jogar mostra o perfil em uso e as horas de jogo dele, e traz a escolha da pasta do jogo e do patch (a aba Instalação saiu).
 - A opção de ir direto ao gameplay saiu.

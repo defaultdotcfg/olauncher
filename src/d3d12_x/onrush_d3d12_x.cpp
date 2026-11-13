@@ -16,6 +16,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include "context_allocator_tracker.h"
 #include "xbox_sampler_translator.h"
+#include "keymap_defs.h"
 #include <activation.h>
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
@@ -4288,6 +4289,57 @@ static DWORD ScriptedButtons() {
   return m;
 }
 
+// Keyboard map (keymap_defs.h), read once from ONRUSH_KEYMAP="Accelerate=57,26;Brake=53,28;..." (hex VK codes).
+struct Keymap {
+  unsigned char keys[KM_COUNT][KM_SLOTS];
+  bool Down(int a) const {
+    for (int s = 0; s < KM_SLOTS; ++s)
+      if (keys[a][s] && (GetAsyncKeyState(keys[a][s]) & 0x8000)) return true;
+    return false;
+  }
+};
+
+static const Keymap &GetKeymap() {
+  static Keymap s_km;
+  static volatile LONG s_init = 0;
+  if (InterlockedCompareExchange(&s_init, 1, 0) == 0) {
+    for (int a = 0; a < KM_COUNT; ++a)
+      for (int s = 0; s < KM_SLOTS; ++s) s_km.keys[a][s] = kKeymapDefaults[a].keys[s];
+    char buf[1024] = {};
+    int custom = 0;
+    DWORD envLen = GetEnvironmentVariableA("ONRUSH_KEYMAP", buf, sizeof(buf));
+    if (envLen >= sizeof(buf)) { log_line("[input] ONRUSH_KEYMAP too long (%lu chars), using the default keys\r\n", envLen); buf[0] = 0; envLen = 0; }
+    if (envLen > 0) {
+      log_line("[input] ONRUSH_KEYMAP=%s\r\n", buf);
+      char *ctx = nullptr;
+      for (char *tok = strtok_s(buf, ";", &ctx); tok; tok = strtok_s(nullptr, ";", &ctx)) {
+        char *eq = strchr(tok, '=');
+        if (!eq) continue;
+        *eq = 0;
+        int a = 0;
+        while (a < KM_COUNT && _stricmp(kKeymapDefaults[a].ini, tok) != 0) ++a;
+        if (a == KM_COUNT) { log_line("[input] ONRUSH_KEYMAP: unknown action '%s'\r\n", tok); continue; }
+        unsigned char k[KM_SLOTS] = {};
+        int n = 0;
+        for (char *p = eq + 1; *p && n < KM_SLOTS;) {
+          char *end = nullptr;
+          unsigned long v = strtoul(p, &end, 16);
+          if (end == p) break;
+          if (v > 0 && v < 0xFF && !KeymapReserved((int)v)) k[n++] = (unsigned char)v;
+          p = *end == ',' ? end + 1 : end;
+          if (*end != ',') break;
+        }
+        for (int s = 0; s < KM_SLOTS; ++s) s_km.keys[a][s] = k[s];
+        ++custom;
+      }
+    }
+    log_line("[input] keyboard map: %s (%d actions from the launcher)\r\n", custom ? "custom" : "default", custom);
+    InterlockedExchange(&s_init, 2);
+  }
+  while (s_init != 2) YieldProcessor();
+  return s_km;
+}
+
 static void PollInput(RawGamepadReading *pReading) {
   InitXInput();
   pReading->Timestamp = GetTickCount64() * 10000;
@@ -4331,42 +4383,35 @@ static void PollInput(RawGamepadReading *pReading) {
                        &pReading->RightThumbstickX, &pReading->RightThumbstickY);
   }
 
-  // Keyboard fallback (only while the game window is focused).
-  //   Enter/Space = A, Esc/Backspace = B, X = X, Y = Y, Tab = View, F1 = Menu
-  //   WASD / arrows = D-Pad + left stick, W/Up = RT (accelerate), S/Down = LT (brake)
-  //   I/J/K/L = right stick, Q/E = LB/RB
+  // Keyboard as a controller (only while the game window is focused). Keys from the launcher's "Controles" tab
+  // (ONRUSH_KEYMAP), defaults in keymap_defs.h. The keyboard adds to the pad: both work at the same time.
   if (focused) {
-    auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
-    if (down(VK_RETURN) || down(VK_SPACE)) pReading->Buttons |= PAD_A;
-    if (down(VK_ESCAPE) || down(VK_BACK)) pReading->Buttons |= PAD_B;
-    if (down('X')) pReading->Buttons |= PAD_X;
-    if (down('Y')) pReading->Buttons |= PAD_Y;
-    if (down(VK_UP) || down('W')) {
-      pReading->Buttons |= 0x100;
-      pReading->LeftThumbstickY = 1.0f;
-      pReading->RightTrigger = 1.0f;
-    }
-    if (down(VK_DOWN) || down('S')) {
-      pReading->Buttons |= 0x200;
-      pReading->LeftThumbstickY = -1.0f;
-      pReading->LeftTrigger = 1.0f;
-    }
-    if (down(VK_LEFT) || down('A')) {
-      pReading->Buttons |= 0x400;
-      pReading->LeftThumbstickX = -1.0f;
-    }
-    if (down(VK_RIGHT) || down('D')) {
-      pReading->Buttons |= 0x800;
-      pReading->LeftThumbstickX = 1.0f;
-    }
-    if (down(VK_TAB)) pReading->Buttons |= PAD_VIEW;
-    if (down(VK_F1)) pReading->Buttons |= PAD_MENU;
-    if (down('Q')) pReading->Buttons |= 0x1000; // LB
-    if (down('E')) pReading->Buttons |= 0x2000; // RB
-    if (down('J')) pReading->RightThumbstickX = -1.0f;
-    if (down('L')) pReading->RightThumbstickX = 1.0f;
-    if (down('I')) pReading->RightThumbstickY = 1.0f;
-    if (down('K')) pReading->RightThumbstickY = -1.0f;
+    const Keymap &km = GetKeymap();
+    auto on = [&](int a) { return km.Down(a); };
+    if (on(KM_A)) pReading->Buttons |= PAD_A;
+    if (on(KM_B)) pReading->Buttons |= PAD_B;
+    if (on(KM_X)) pReading->Buttons |= PAD_X;
+    if (on(KM_Y)) pReading->Buttons |= PAD_Y;
+    if (on(KM_VIEW)) pReading->Buttons |= PAD_VIEW;
+    if (on(KM_MENU)) pReading->Buttons |= PAD_MENU;
+    if (on(KM_LB)) pReading->Buttons |= 0x1000;
+    if (on(KM_RB)) pReading->Buttons |= 0x2000;
+    if (on(KM_L3)) pReading->Buttons |= 0x4000;
+    if (on(KM_R3)) pReading->Buttons |= 0x8000;
+    if (on(KM_ACCEL)) pReading->RightTrigger = 1.0f;
+    if (on(KM_BRAKE)) pReading->LeftTrigger = 1.0f;
+    // D-pad: own keys (in a race it opens the taunt wheel, so the driving keys must not press it)
+    if (on(KM_DPAD_UP)) pReading->Buttons |= 0x100;
+    if (on(KM_DPAD_DOWN)) pReading->Buttons |= 0x200;
+    if (on(KM_DPAD_LEFT)) pReading->Buttons |= 0x400;
+    if (on(KM_DPAD_RIGHT)) pReading->Buttons |= 0x800;
+    // left stick; opposite keys held together cancel out
+    const bool up = on(KM_UP), dn = on(KM_DOWN), lf = on(KM_LEFT), rt = on(KM_RIGHT);
+    if (up != dn) pReading->LeftThumbstickY = up ? 1.0f : -1.0f;
+    if (lf != rt) pReading->LeftThumbstickX = rt ? 1.0f : -1.0f;
+    const bool lu = on(KM_RS_UP), ld = on(KM_RS_DOWN), ll = on(KM_RS_LEFT), lr = on(KM_RS_RIGHT);
+    if (lu != ld) pReading->RightThumbstickY = lu ? 1.0f : -1.0f;
+    if (ll != lr) pReading->RightThumbstickX = lr ? 1.0f : -1.0f;
   }
 
   // Debug-only: periodically inject an 'A' press to walk past the title screen
@@ -4444,8 +4489,8 @@ static void PollInput(RawGamepadReading *pReading) {
   }
 }
 
-// True while a "confirm / skip" input is held (any face button, Start, or
-// Enter/Space/A/E on the keyboard). Used only by the boot/title pacing logic.
+// True while a "confirm / skip" input is held (any face button or Start, on the pad or on the
+// keyboard keys mapped to them). Used only by the boot/title pacing logic.
 static bool IsAdvanceInputHeld() {
   if (ScriptedButtons() & PAD_A) return true;
   // -gameplay: the title check comes through here (not the gamepad poll) when the intro is skipped.
@@ -4454,9 +4499,9 @@ static bool IsAdvanceInputHeld() {
     if (((GetTickCount64() - s_t0) % 700) < 150) return true;
   }
   if (!GameWindowFocused()) return false;
-  if ((GetAsyncKeyState(VK_SPACE) & 0x8000) || (GetAsyncKeyState(VK_RETURN) & 0x8000) ||
-      (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState('E') & 0x8000)) {
-    return true;
+  {
+    const Keymap &km = GetKeymap();
+    if (km.Down(KM_A) || km.Down(KM_X) || km.Down(KM_Y) || km.Down(KM_MENU)) return true;
   }
   XINPUT_STATE_RAW xs = {};
   if (ReadXInput(&xs)) {

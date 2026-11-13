@@ -56,18 +56,48 @@
 #define WM_GAME_STARTED     (WM_USER + 102)
 #define WM_GAME_EXITED      (WM_USER + 103)
 
-// Dark warm theme — inspired by the ONRUSH launcher reference.
-#define COLOR_BG_MAIN       RGB(18, 14, 11)
-#define COLOR_BG_CARD       RGB(43, 30, 22)
-#define COLOR_BG_INPUT      RGB(30, 22, 17)
-#define COLOR_BG_LOG        RGB(15, 12, 10)
-#define COLOR_BORDER        RGB(76, 55, 41)
-#define COLOR_ACCENT_ORANGE RGB(226, 132, 67)
-#define COLOR_ACCENT_GREEN  RGB(145, 195, 133)
-#define COLOR_ACCENT_RED    RGB(220, 86, 62)
-#define COLOR_TEXT_PRIMARY  RGB(244, 232, 215)
-#define COLOR_TEXT_MUTED    RGB(181, 160, 139)
-#define COLOR_LOG_TEXT      RGB(166, 205, 145)
+// Launcher colours: a warm dark theme (default) and a light one ("Tema" in the settings, onrush.ini [Launcher] Theme).
+struct Palette
+{
+    bool dark;
+    COLORREF bgMain, bgCard, bgInput, bgLog, border, accentOrange, accentGreen, accentRed, textPrimary, textMuted, logText;
+    COLORREF heroDim;      // full-cover background of the tabs that hide the art (Fotos, Controles)
+    COLORREF homeCard, navActive, toggleOff, knob, btnFill, btnPressed, launchPressed, closePressed, disabledFill;
+    COLORREF comboSel, accentText, onAccent, track;
+};
+static const Palette kPaletteDark = {
+    true,
+    RGB(18, 14, 11), RGB(43, 30, 22), RGB(30, 22, 17), RGB(15, 12, 10), RGB(76, 55, 41),
+    RGB(226, 132, 67), RGB(145, 195, 133), RGB(220, 86, 62), RGB(244, 232, 215), RGB(181, 160, 139), RGB(166, 205, 145),
+    RGB(30, 22, 17),
+    RGB(52, 36, 26), RGB(51, 36, 27), RGB(58, 64, 74), RGB(245, 245, 245), RGB(49, 35, 26), RGB(63, 45, 33), RGB(194, 103, 50),
+    RGB(184, 66, 49), RGB(74, 58, 45),
+    RGB(66, 44, 31), RGB(239, 164, 103), RGB(244, 232, 215), RGB(48, 54, 64),
+};
+static const Palette kPaletteLight = {
+    false,
+    RGB(244, 238, 230), RGB(252, 249, 244), RGB(239, 232, 222), RGB(250, 247, 242), RGB(214, 198, 180),
+    RGB(207, 106, 42), RGB(58, 132, 66), RGB(196, 60, 40), RGB(40, 30, 22), RGB(118, 100, 84), RGB(38, 104, 48),
+    RGB(250, 246, 240),
+    RGB(246, 236, 223), RGB(234, 222, 207), RGB(196, 186, 174), RGB(255, 255, 255), RGB(244, 237, 228), RGB(231, 219, 204), RGB(184, 90, 32),
+    RGB(170, 50, 32), RGB(226, 216, 205),
+    RGB(246, 224, 204), RGB(176, 82, 24), RGB(255, 252, 247), RGB(224, 215, 204),
+};
+static Palette g_pal = kPaletteDark;
+#define COLOR_BG_MAIN       g_pal.bgMain
+#define COLOR_BG_CARD       g_pal.bgCard
+#define COLOR_BG_INPUT      g_pal.bgInput
+#define COLOR_BG_LOG        g_pal.bgLog
+#define COLOR_BORDER        g_pal.border
+#define COLOR_ACCENT_ORANGE g_pal.accentOrange
+#define COLOR_ACCENT_GREEN  g_pal.accentGreen
+#define COLOR_ACCENT_RED    g_pal.accentRed
+#define COLOR_TEXT_PRIMARY  g_pal.textPrimary
+#define COLOR_TEXT_MUTED    g_pal.textMuted
+#define COLOR_LOG_TEXT      g_pal.logText
+// GDI+ colour from a palette entry
+#define GPC(c)        Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c))
+#define GPCA(a, c)    Gdiplus::Color((BYTE)(a), GetRValue(c), GetGValue(c), GetBValue(c))
 
 // Configuration structure
 struct LauncherConfig
@@ -92,6 +122,8 @@ struct LauncherConfig
     int musicShuffle;
     int musicVolume;        // 0..100
     wchar_t musicPlaylist[64]; // playlist name (file <launcher dir>\playlists\<name>.m3u8)
+    int minimizeOnPlay;     // minimize the launcher when the game starts (restored when it closes)
+    wchar_t theme[8];       // launcher colours: dark or light
 };
 
 static LauncherConfig g_config;
@@ -152,6 +184,8 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->musicShuffle = 0;
     cfg->musicVolume = 70;
     cfg->musicPlaylist[0] = L'\0';
+    cfg->minimizeOnPlay = 0;
+    wcscpy_s(cfg->theme, 8, L"dark");
 }
 
 static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
@@ -186,6 +220,9 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     cfg->musicVolume = GetPrivateProfileIntW(L"Music", L"Volume", cfg->musicVolume, iniPath);
     if (cfg->musicVolume < 0 || cfg->musicVolume > 100) cfg->musicVolume = 70;
     GetPrivateProfileStringW(L"Music", L"Playlist", cfg->musicPlaylist, cfg->musicPlaylist, 64, iniPath);
+    cfg->minimizeOnPlay = GetPrivateProfileIntW(L"Launcher", L"MinimizeOnPlay", cfg->minimizeOnPlay, iniPath);
+    GetPrivateProfileStringW(L"Launcher", L"Theme", cfg->theme, cfg->theme, 8, iniPath);
+    if (_wcsicmp(cfg->theme, L"light") != 0) wcscpy_s(cfg->theme, 8, L"dark");
 }
 
 static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
@@ -230,6 +267,9 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
     swprintf_s(buf, 64, L"%d", cfg->musicVolume);
     WritePrivateProfileStringW(L"Music", L"Volume", buf, iniPath);
     WritePrivateProfileStringW(L"Music", L"Playlist", cfg->musicPlaylist, iniPath);
+    swprintf_s(buf, 64, L"%d", cfg->minimizeOnPlay);
+    WritePrivateProfileStringW(L"Launcher", L"MinimizeOnPlay", buf, iniPath);
+    WritePrivateProfileStringW(L"Launcher", L"Theme", cfg->theme, iniPath);
 }
 
 static void GetEffectiveGameDir(const LauncherConfig *cfg, wchar_t *outPath, size_t maxLen)
@@ -406,6 +446,7 @@ struct ModuleRecord
 #define PLAYLIST_HIDDEN   1
 static bool ProfUnlocked(const std::wstring &name);  // profiles_ui.inc
 static bool ProfAllUnlocked(const std::wstring &name);
+static void KbSetGameEnv();                          // controls_ui.inc
 static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 {
     LauncherConfig *cfg = (LauncherConfig *)lpParam;
@@ -457,6 +498,8 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     // Player name (gamertag in game) and where Connected Storage saves go: <save folder>\<name>\...
     SetEnvironmentVariableW(L"ONRUSH_PLAYER_NAME", cfg->playerName[0] ? cfg->playerName : nullptr);
     // Photo export (F12): saved to <game folder>\\Fotos at the output resolution, without the HUD.
+    // Keyboard as a controller ("Controles" tab): onrush.ini [Keyboard] -> ONRUSH_KEYMAP for the bridge.
+    KbSetGameEnv();
     SetEnvironmentVariableW(L"ONRUSH_PHOTO_FORMAT", _wcsicmp(cfg->photoFormat, L"jpg") == 0 ? L"jpg" : L"png");
     // Own playlist (launcher "Playlist" tab): the bridge plays it and holds the game music at 0.
     {

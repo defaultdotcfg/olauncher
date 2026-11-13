@@ -313,7 +313,7 @@ static void ProfCreateControls(HWND hwnd)
     DWORD od = WS_CHILD | WS_TABSTOP | BS_OWNERDRAW;
     g_hProfList = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
                                 X, 104, W, 190, hwnd, (HMENU)ID_PROF_LIST, nullptr, nullptr);
-    SetWindowTheme(g_hProfList, L"DarkMode_Explorer", nullptr);
+    SetWindowTheme(g_hProfList, g_pal.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     g_hProfName = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, X + 10, 333, W - 20, 20, hwnd, (HMENU)ID_PROF_NAME, nullptr, nullptr);
     SendMessageW(g_hProfName, EM_LIMITTEXT, 20, 0);
     int bw = (W - 24) / 4;

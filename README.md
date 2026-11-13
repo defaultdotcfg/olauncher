@@ -33,6 +33,7 @@ O launcher cuida de tudo: prepara o jogo a partir da sua cópia, aplica o patch 
 - **Shaders preparados uma vez.** Na primeira vez, o launcher lê os shaders direto dos pacotes do jogo, traduz e compila tudo de uma vez, com uma barra de progresso. O jogo não precisa ser aberto para isso.
 - **Sem duplicar o jogo.** Os pacotes grandes (`dat\`, ~34 GB) ficam na sua cópia e são ligados por atalhos (junctions). Só ~60 MB são copiados.
 - **Versão final do jogo.** Se a sua cópia for a 1.0.64980.34, o launcher aplica o patch 1.80.100.100 sozinho.
+- **Controle ou teclado.** Controles de Xbox funcionam direto. O teclado também serve de controle, com as teclas configuráveis na aba **Controles**.
 - **Perfis.** Vários jogadores, cada um com o próprio save e as próprias horas de jogo.
 - **Modo foto.** **F12** salva a imagem do jogo sem a interface, em PNG ou JPG. A aba **Fotos** mostra a galeria.
 - **Atualização automática.** O launcher procura novas versões no GitHub e se atualiza sozinho, mantendo configurações, saves e shaders.
@@ -77,20 +78,40 @@ O launcher procura novas versões ao abrir (e no botão **Verificar atualizaçõ
 
 ## Controles
 
-Controles de Xbox (XInput) funcionam direto. O teclado vira um controle virtual, e só é lido enquanto a janela do jogo está em foco:
+Controles de Xbox (XInput) funcionam direto. O teclado também funciona como um controle de Xbox, ao mesmo tempo que o controle de verdade, e só é lido enquanto a janela do jogo está em foco.
 
-| Controle | Teclado |
-|---|---|
-| A | Enter ou Espaço |
-| B | Esc ou Backspace |
-| X / Y | X / Y |
-| Acelerar (RT) | W ou ↑ |
-| Frear e ré (LT) | S ou ↓ |
-| Direção (analógico esquerdo e direcional) | W A S D ou setas |
-| Analógico direito | I J K L |
-| LB / RB | Q / E |
-| View | Tab |
-| Menu | F1 |
+### Mapeamento padrão do teclado
+
+| Ação no jogo | Botão do controle | Tecla 1 | Tecla 2 |
+|---|---|---|---|
+| Acelerar | RT | W | ↑ |
+| Frear e ré | LT | S | ↓ |
+| Esquerda / direita | Analógico esquerdo | A / D | ← / → |
+| Cima / baixo (menus) | Analógico esquerdo | W / S | ↑ / ↓ |
+| Provocações | Direcional ↑ / ↓ / ← / → | 1 / 2 / 3 / 4 | — |
+| Confirmar | A | Enter | Espaço |
+| Voltar | B | Esc | Backspace |
+| — | X | X | — |
+| — | Y | Y | — |
+| — | LB / RB | Q / E | — |
+| — | View | Tab | — |
+| Pausa | Menu | F1 | — |
+| — | L3 / R3 (clique dos analógicos) | sem tecla | — |
+| — | Analógico direito (← → ↑ ↓) | J / L / I / K | — |
+
+W e S aparecem duas vezes de propósito: a mesma tecla acelera (ou freia) na corrida e anda pelos menus. O direcional tem teclas próprias porque, na corrida, ele abre a lista de provocações.
+
+### Trocando as teclas
+
+Na aba **Controles** do launcher:
+
+1. Escolha a ação na lista.
+2. Clique em **Trocar tecla 1** ou **Trocar tecla 2** (ou dê dois cliques na linha) e aperte a tecla nova. Clique em **Cancelar** para desistir.
+3. **Limpar as teclas da ação** deixa a ação sem tecla. **Restaurar o padrão** volta tudo para a tabela acima.
+
+Cada ação aceita duas teclas, e uma tecla pode servir para mais de uma ação. As mudanças são salvas na hora (`onrush.ini`, seção `[Keyboard]`) e valem a partir do próximo **JOGAR**. F11 e F12 não podem ser usadas, porque são atalhos do jogo.
+
+### Atalhos
 
 | Atalho | Ação |
 |---|---|
@@ -102,20 +123,22 @@ Controles de Xbox (XInput) funcionam direto. O teclado vira um controle virtual,
 ## Configurações
 
 <details>
-<summary>Opções do launcher (aba <b>Jogar</b>)</summary>
+<summary>Opções do launcher (aba <b>Configurações</b>)</summary>
 
 | Opção | Escolhas | Padrão |
 |---|---|---|
-| Resolução | Resoluções do monitor | Resolução do monitor |
+| Resolução | 1280 × 720, 1920 × 1080, 2560 × 1440, 3840 × 2160 | 1920 × 1080 |
 | Modo de tela | Sem bordas, Janela, Tela cheia | Sem bordas |
 | Sincronização vertical (VSync) | Ligada ou desligada | Ligada |
 | Idioma do texto | Automático (sistema) ou um idioma do jogo | Automático |
 | Idioma da voz | Igual ao texto ou um idioma do jogo | Igual ao texto |
 | Pular introdução | Pula a tela legal e os logos | Desligado |
 | Fotos do modo foto (F12) | PNG (maior qualidade) ou JPG (mais leve) | PNG |
-| Discord Rich Presence | Mostra que você está jogando ONRUSH | Desligado |
+| Discord Rich Presence | Mostra que você está jogando ONRUSH | Ligado |
 | Pasta do jogo / Pasta de saves | Qualquer pasta | Pasta do launcher |
 | Idioma do launcher | Português, English, Español | Português |
+| Tema do launcher | Escuro ou Claro (muda na hora) | Escuro |
+| Minimizar o launcher ao jogar | O launcher minimiza quando o jogo abre e volta quando ele fecha | Desligado |
 
 | Opção avançada | Para que serve |
 |---|---|

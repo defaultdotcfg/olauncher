@@ -13,6 +13,7 @@ struct DiscordRpc
 {
     HANDLE pipe = INVALID_HANDLE_VALUE;
     int nonce = 0;
+    std::string lastError;   // why the last Connect/SetPlaying failed (Discord's own reply when it sent one)
 
     bool Write(uint32_t op, const std::string &json)
     {
@@ -55,10 +56,24 @@ struct DiscordRpc
             swprintf_s(name, L"\\\\.\\pipe\\discord-ipc-%d", i);
             pipe = CreateFileW(name, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         }
-        if (pipe == INVALID_HANDLE_VALUE) return false;
+        if (pipe == INVALID_HANDLE_VALUE) { lastError = "Discord não está aberto (o app do Discord para PC precisa estar rodando; o Discord no navegador não aceita Rich Presence)"; return false; }
         std::string hs = std::string("{\"v\":1,\"client_id\":\"") + appId + "\"}";
         std::string reply;
-        if (!Write(0, hs) || !ReadReply(&reply) || reply.find("READY") == std::string::npos) { Close(); return false; }
+        if (!Write(0, hs) || !ReadReply(&reply)) { lastError = "o Discord não respondeu"; Close(); return false; }
+        if (reply.find("READY") == std::string::npos) { lastError = "o Discord recusou a conexão: " + reply.substr(0, 300); Close(); return false; }
+        lastError.clear();
+        return true;
+    }
+
+    bool Connected() const { return pipe != INVALID_HANDLE_VALUE; }
+
+    // false once Discord closed its end (it was quit or restarted)
+    bool Alive()
+    {
+        if (pipe == INVALID_HANDLE_VALUE) return false;
+        DWORD avail = 0;
+        if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &avail, nullptr)) { Close(); return false; }
+        if (avail >= 8) ReadReply();   // drop unsolicited frames so the pipe never fills up
         return true;
     }
 
@@ -71,7 +86,11 @@ struct DiscordRpc
             "\"timestamps\":{\"start\":%lld},"
             "\"assets\":{\"large_image\":\"onrush\",\"large_text\":\"ONRUSH\"}}},\"nonce\":\"%d\"}",
             GetCurrentProcessId(), startEpoch, ++nonce);
-        return Write(1, json) && ReadReply();
+        std::string reply;
+        if (!Write(1, json) || !ReadReply(&reply)) { lastError = "o Discord não respondeu ao SET_ACTIVITY"; Close(); return false; }
+        if (reply.find("\"evt\":\"ERROR\"") != std::string::npos) { lastError = "o Discord recusou a atividade: " + reply.substr(0, 300); return false; }
+        lastError.clear();
+        return true;
     }
 
     void Clear()

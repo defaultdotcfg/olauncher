@@ -94,6 +94,7 @@ static UINT g_dragListMsg = 0;
 static int g_plDragFrom = -1;
 static void ProfUpdateVisibility(HWND hwnd);
 static void PhUpdateVisibility(HWND hwnd);
+static void KbUpdateVisibility(HWND hwnd);
 static HWND g_hTabHome = nullptr, g_hTabSettings = nullptr, g_hTabPlaylist = nullptr, g_hTabSetup = nullptr;
 static HWND g_hPlCombo = nullptr, g_hPlNew = nullptr, g_hPlRename = nullptr, g_hPlDelete = nullptr;
 static HWND g_hPlEnable = nullptr, g_hPlShuffle = nullptr, g_hPlVolume = nullptr, g_hPlAddFiles = nullptr, g_hPlAddFolder = nullptr;
@@ -560,7 +561,7 @@ static void PlCreateControls(HWND hwnd)
 
     DWORD comboStyle = WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL;
     g_hPlCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 78, W, 300, hwnd, (HMENU)ID_PL_COMBO, nullptr, nullptr);
-    SetWindowTheme(g_hPlCombo, L"DarkMode_CFD", nullptr);
+    SetWindowTheme(g_hPlCombo, g_pal.dark ? L"DarkMode_CFD" : L"CFD", nullptr);
     SendMessageW(g_hPlCombo, CB_SETITEMHEIGHT, (WPARAM)-1, 24);
     g_hPlNameEdit = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, X + 10, 85, W - 20, 20, hwnd, (HMENU)ID_PL_NAMEEDIT, nullptr, nullptr);
     SendMessageW(g_hPlNameEdit, EM_LIMITTEXT, 48, 0);
@@ -588,7 +589,7 @@ static void PlCreateControls(HWND hwnd)
     g_hPlList = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_TABSTOP | WS_VSCROLL | LBS_OWNERDRAWFIXED | LBS_NOTIFY |
                               LBS_NOINTEGRALHEIGHT | LBS_WANTKEYBOARDINPUT,
                               220, 114, UI_HERO_W - 244, UI_H - 114 - 44, hwnd, (HMENU)ID_PL_LIST, nullptr, nullptr);
-    SetWindowTheme(g_hPlList, L"DarkMode_Explorer", nullptr);
+    SetWindowTheme(g_hPlList, g_pal.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     MakeDragList(g_hPlList);
     g_dragListMsg = RegisterWindowMessageW(L"commctrl_DragListMsg");  // DRAGLISTMSGSTRING (ANSI in this build)
     DragAcceptFiles(hwnd, TRUE);
@@ -604,7 +605,7 @@ static void PlCreateControls(HWND hwnd)
 static void PlApplyLanguage()
 {
     SetWindowTextW(g_hTabHome, PT(P_TAB_HOME));
-    SetWindowTextW(g_hTabSettings, T(S_SETTINGS));
+    SetWindowTextW(g_hTabSettings, T(S_TAB_SETTINGS));
     SetWindowTextW(g_hTabPlaylist, PT(P_TAB_PLAYLIST));
     SetWindowTextW(g_hTabSetup, PT(P_TAB_SETUP));
     SetWindowTextW(g_hPlNew, PT(P_NEW));
@@ -628,7 +629,7 @@ static void PlUpdateVisibility(HWND hwnd)
     bool pl = g_tab == 1, settingsPage = g_tab == 2;
     int s = settingsPage ? SW_SHOW : SW_HIDE, p = pl ? SW_SHOW : SW_HIDE;
     HWND settings[] = { g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hVsyncChk, g_hDiscordChk,
-                        g_hSkipIntroChk, g_hSaveEdit, g_hAdvBtn, GetDlgItem(hwnd, ID_SAVE_BROWSE) };
+                        g_hSkipIntroChk, g_hSaveEdit, g_hAdvBtn, GetDlgItem(hwnd, ID_SAVE_BROWSE), g_hMinimizeChk, g_hThemeCombo };
     for (HWND h : settings) if (h) ShowWindow(h, s);
     ShowWindow(g_hGamePathEdit, g_tab == 0 ? SW_SHOW : SW_HIDE);
     ShowWindow(GetDlgItem(hwnd, ID_GAME_PATH_BROWSE), g_tab == 0 ? SW_SHOW : SW_HIDE);
@@ -655,6 +656,7 @@ static void PlUpdateVisibility(HWND hwnd)
     InvalidateRect(g_hTabSetup, nullptr, TRUE);
     ProfUpdateVisibility(hwnd);
     PhUpdateVisibility(hwnd);
+    KbUpdateVisibility(hwnd);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -668,7 +670,7 @@ static void PlSetTab(HWND hwnd, int tab)
 // Left area while the playlist tab is open: title, search box, list frame, empty state.
 static void PlDrawHero(Gdiplus::Graphics &g)
 {
-    Gdiplus::SolidBrush dim(Gdiplus::Color(240, 30, 22, 17));
+    Gdiplus::SolidBrush dim(GPCA(240, g_pal.heroDim));
     g.FillRectangle(&dim, 216, 0, UI_HERO_W - 216, UI_H);
     Gdiplus::FontFamily ff(L"Segoe UI");
     Gdiplus::Font fTitle(&ff, 22, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
@@ -711,7 +713,7 @@ static void PlDrawHero(Gdiplus::Graphics &g)
         g.DrawString(msg, -1, &fSmall, Gdiplus::RectF(220, 200, UI_HERO_W - 244.f, 22), &center, &muted);
     }
     g.DrawString(PT(P_HINT), -1, &fSmall, Gdiplus::PointF(220, UI_H - 32), &muted);
-    Gdiplus::SolidBrush rail(Gdiplus::Color(255, 18, 14, 11));
+    Gdiplus::SolidBrush rail(GPC(COLOR_BG_MAIN));
     g.FillRectangle(&rail, 0, 0, 216, UI_H);
     Gdiplus::SolidBrush ready(Gdiplus::Color(255, 145, 195, 133));
     Gdiplus::SolidBrush missing(Gdiplus::Color(255, 220, 86, 62));

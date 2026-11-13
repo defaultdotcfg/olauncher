@@ -84,7 +84,7 @@ static HBITMAP PhThumb(const std::wstring &path)
     Gdiplus::Bitmap thumb(PH_THUMB_W, PH_THUMB_H, PixelFormat32bppARGB);
     {
         Gdiplus::Graphics g(&thumb);
-        g.Clear(Gdiplus::Color(255, 30, 22, 17));
+        g.Clear(GPC(g_pal.heroDim));
         g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBilinear);
         Gdiplus::Bitmap *src = Gdiplus::Bitmap::FromFile(path.c_str());
         if (src && src->GetLastStatus() == Gdiplus::Ok && src->GetWidth() && src->GetHeight())
@@ -96,7 +96,7 @@ static HBITMAP PhThumb(const std::wstring &path)
         delete src;
     }
     HBITMAP hb = nullptr;
-    thumb.GetHBITMAP(Gdiplus::Color(255, 30, 22, 17), &hb);
+    thumb.GetHBITMAP(GPC(g_pal.heroDim), &hb);
     return hb;
 }
 
@@ -174,6 +174,16 @@ static void PhDelete(HWND hwnd)
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
+static void PhApplyThemeColors()
+{
+    if (!g_hPhList) return;
+    ListView_SetBkColor(g_hPhList, g_pal.heroDim);
+    ListView_SetTextBkColor(g_hPhList, g_pal.heroDim);
+    ListView_SetTextColor(g_hPhList, COLOR_TEXT_PRIMARY);
+    g_phLoadedKey.clear();   // thumbnails are letterboxed with the background colour: rebuild them
+    if (g_tab == 4) PhRefresh(true);
+}
+
 static void PhCreateControls(HWND hwnd)
 {
     const int X = UI_PANEL_X, W = UI_PANEL_W;
@@ -181,11 +191,9 @@ static void PhCreateControls(HWND hwnd)
     g_hTabPhotos = CreateWindowW(L"BUTTON", L"", od | WS_VISIBLE, 16, PLAYLIST_HIDDEN ? 276 : 324, 184, 42, hwnd, (HMENU)ID_TAB_PHOTOS, nullptr, nullptr);
     g_hPhList = CreateWindowExW(0, WC_LISTVIEWW, L"", WS_CHILD | WS_TABSTOP | LVS_ICON | LVS_AUTOARRANGE | LVS_SHOWSELALWAYS,
                                 220, 64, UI_HERO_W - 226, UI_H - 76, hwnd, (HMENU)ID_PH_LIST, nullptr, nullptr);
-    SetWindowTheme(g_hPhList, L"DarkMode_Explorer", nullptr);
+    SetWindowTheme(g_hPhList, g_pal.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     ListView_SetExtendedListViewStyle(g_hPhList, LVS_EX_CHECKBOXES | LVS_EX_DOUBLEBUFFER);
-    ListView_SetBkColor(g_hPhList, RGB(30, 22, 17));
-    ListView_SetTextBkColor(g_hPhList, RGB(30, 22, 17));
-    ListView_SetTextColor(g_hPhList, RGB(244, 232, 215));
+    PhApplyThemeColors();
     g_phImages = ImageList_Create(PH_THUMB_W, PH_THUMB_H, ILC_COLOR32, 16, 16);
     ListView_SetImageList(g_hPhList, g_phImages, LVSIL_NORMAL);
     ListView_SetIconSpacing(g_hPhList, PH_THUMB_W + 12, PH_THUMB_H + 40);
@@ -218,11 +226,11 @@ static void PhUpdateVisibility(HWND hwnd)
 // Left area while the tab is open: title over the gallery (or the empty state).
 static void PhDrawHero(Gdiplus::Graphics &g)
 {
-    Gdiplus::SolidBrush dim(Gdiplus::Color(255, 30, 22, 17));
+    Gdiplus::SolidBrush dim(GPC(g_pal.heroDim));
     g.FillRectangle(&dim, 216, 0, UI_HERO_W - 216, UI_H);
     Gdiplus::FontFamily ff(L"Segoe UI");
     Gdiplus::Font fTitle(&ff, 22, Gdiplus::FontStyleBold, Gdiplus::UnitPixel), fSmall(&ff, 13, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-    Gdiplus::SolidBrush white(Gdiplus::Color(255, 244, 232, 215)), muted(Gdiplus::Color(255, 181, 160, 139));
+    Gdiplus::SolidBrush white(GPC(COLOR_TEXT_PRIMARY)), muted(GPC(COLOR_TEXT_MUTED));
     g.DrawString(FT(F_TITLE), -1, &fTitle, Gdiplus::PointF(232, 18), &white);
     ULONGLONG total = 0; for (auto &p : g_photos) total += p.size;
     wchar_t info[96]; swprintf_s(info, FT(F_COUNT_FMT), (int)g_photos.size(), PhFmtSize(total).c_str());
