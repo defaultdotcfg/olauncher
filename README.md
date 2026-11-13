@@ -1,6 +1,6 @@
 <img width="300" height="80" alt="rush_launcher_white" align="center" src="https://github.com/user-attachments/assets/60723459-9d94-48f2-b413-8f5a5d927254" />
 
-## rushlauncher — Port para PC de ONRUSH™
+## RushLauncher — Port para PC de ONRUSH™
 
 Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão 1.0.64980.34)** nativamente no Windows x64 com Direct3D 12.
 
