@@ -118,7 +118,8 @@ def parse_dxbc_sig(path):
     return kind, sig(b'ISGN'), sig(b'OSGN')
 
 def parse_decls(path):
-    """DXBC SHEX declarations -> {(space, reg): (kind, stride)}; kind in 'SB' (structured SRV), 'RB' (raw SRV), 'USB' (structured UAV)"""
+    """DXBC SHEX declarations -> {(space, reg): (kind, stride)} for SRVs ('SB' structured, 'RB' raw) and
+    {('u', space, reg): (kind, stride)} for UAVs ('USB' structured, 'RUB' raw): t35 and u35 are different resources."""
     b = G.read_file(path)
     n = struct.unpack_from('<I', b, 0x1C)[0]
     out = {}
@@ -134,9 +135,9 @@ def parse_decls(path):
             toks = struct.unpack_from('<%dI' % L, d, k * 4)
             if op == 0x58 and L >= 7: out[('tex', toks[6], toks[3], toks[4])] = ((t >> 11) & 0x1f, 0)
             elif op == 0xa2 and L >= 7: out[(toks[6], toks[3])] = ('SB', toks[5])
-            elif op == 0x9e and L >= 7: out[(toks[6], toks[3])] = ('USB', toks[5])
+            elif op == 0x9e and L >= 7: out[('u', toks[6], toks[3])] = ('USB', toks[5])
             elif op == 0x9c and L >= 7: out[('utex', toks[6], toks[3], toks[4])] = ((t >> 11) & 0x1f, 0)
-            elif op == 0x9d and L >= 6: out[(toks[5], toks[3])] = ('RUB', 0)
+            elif op == 0x9d and L >= 6: out[('u', toks[5], toks[3])] = ('RUB', 0)
             elif op == 0x9b and L >= 4: out['tg'] = (toks[1], toks[2], toks[3])
             elif op == 0x9f and L >= 3: out['tgsm'] = out.get('tgsm', 0) + toks[2]
             elif op == 0xa0 and L >= 4: out['tgsm'] = out.get('tgsm', 0) + toks[2] * toks[3]
@@ -1199,7 +1200,7 @@ class Tr:
                 nm = f"RootCBV_b{P[0]['reg']}_sp{P[0]['space']}"; self.bufs[nm] = ('CBV', P[0]['reg'], P[0]['space']); return 'cb', nm, 0
             if P and P[0]['type'] in ('UAV', 'SRV') and not _ENV.get('NO_ROOT_UAV'):
                 # root UAV/SRV (a raw GPU address in user data; the shader builds the rest of the V# itself)
-                reg, space = P[0]['reg'], P[0]['space']; dk = self.decls.get((space, reg))
+                reg, space = P[0]['reg'], P[0]['space']; dk = self.decls.get(('u', space, reg) if P[0]['type'] == 'UAV' else (space, reg))
                 if P[0]['type'] == 'UAV' and dk and dk[0] == 'USB':
                     nm = f"SB_u{reg}_sp{space}"; self.bufs[nm] = ('USB', reg, space, dk[1]); return 'sb', nm, dk[1]
                 if P[0]['type'] == 'SRV' and dk and dk[0] == 'SB':
@@ -1219,12 +1220,12 @@ class Tr:
         r, pos, sz = f
         reg = r['reg'] + (static - pos) // sz
         if self._counter_hit:
-            dk = self.decls.get((r['space'], reg))
+            dk = self.decls.get(('u', r['space'], reg))
             if not (dk and dk[0] == 'USB'): raise ValueError("counter of a non-structured UAV")
             nm = f"SB_u{reg}_sp{r['space']}"; self.bufs[nm] = ('USB', reg, r['space'], dk[1]); return 'ctr', nm, dk[1]
         if r['t'] == 'CBV':
             nm = f"CB_sp{r['space']}_r{reg}"; self.bufs[nm] = ('CBV', reg, r['space']); return 'cb', nm, 0
-        dk = self.decls.get((r['space'], reg))
+        dk = self.decls.get(('u', r['space'], reg) if r['t'] == 'UAV' else (r['space'], reg))
         if r['t'] == 'SRV' and dk and dk[0] == 'SB':
             nm = f"SB_t{reg}_sp{r['space']}"; self.bufs[nm] = ('SB', reg, r['space'], dk[1]); return 'sb', nm, dk[1]
         if r['t'] == 'UAV' and dk and dk[0] == 'USB':

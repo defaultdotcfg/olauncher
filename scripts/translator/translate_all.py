@@ -36,8 +36,14 @@ sys.path.insert(0, HERE)
 #     v_cndmask; loops holding a group barrier stay real loops when all their exits are uniform (scalar SCC). The GPU particle
 #     bitonic sort (c2d308f5, ca754cf8, ...) ran one step only: unsorted keys gave the 16 particle draws 0..2 instances (or -1),
 #     so dust, smoke and water splash were missing. 32 shaders change (1 PS, 31 CS).
-TRANSLATOR_REV = 10
-RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs')}
+# 11: SRV and UAV declarations with the same register number (t35 / u35) no longer share one key: the UAV stride
+#     overwrote the SRV's, so structured SRVs became raw buffers indexed by the load size (4/8/12 bytes) instead of
+#     the record stride (672 for the per-competitor table t35). Particle spawn kernels read the team, vehicle class
+#     and transform of every competitor but the first from the wrong place: rush auras came out orange instead of
+#     the team blue, and emitters were placed with garbage transforms.
+TRANSLATOR_REV = 11
+RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs'),
+               11: ('vs', 'ps', 'cs')}
 
 
 def say(*a):
