@@ -41,9 +41,13 @@ sys.path.insert(0, HERE)
 #     the record stride (672 for the per-competitor table t35). Particle spawn kernels read the team, vehicle class
 #     and transform of every competitor but the first from the wrong place: rush auras came out orange instead of
 #     the team blue, and emitters were placed with garbage transforms.
-TRANSLATOR_REV = 11
+# 12: `ds_read2_b32 v[13:14], v13` (LDS read whose address register is also its first destination) took the second
+#     dword from the address just overwritten by the first. GCN reads the address once, at issue. The temporal
+#     upscaler (CS 83717de2) got a garbage red value in its neighbourhood min/max: cyan and red fringes and trails
+#     behind moving cars and around trees.
+TRANSLATOR_REV = 12
 RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs'),
-               11: ('vs', 'ps', 'cs')}
+               11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs')}
 
 
 def say(*a):

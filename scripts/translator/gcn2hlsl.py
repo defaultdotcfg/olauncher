@@ -1393,6 +1393,12 @@ class Tr:
         off = o0 | (o1 << 8)
         def W(byteexpr): return f"lds[({byteexpr}) / 4u]"
         base = f"v{va}"
+        if name in ('ds_read2_b32', 'ds_read2st64_b32', 'ds_read_b64') and va == vd:
+            # GCN reads ADDR when the instruction issues: `ds_read2_b32 v[13:14], v13` loads both dwords from the old v13.
+            # The first assignment below overwrites v13, so the second would use the loaded value as its address.
+            # NO_DS_ADDR_SNAP=1 = old behaviour.
+            if not _ENV.get('NO_DS_ADDR_SNAP'):
+                ta_ = self.t(); self.emit(f"uint {ta_} = v{va};"); base = ta_
         if name == 'ds_read_b32': self.setv(vd, f"asfloat({W(f'{base} + {off}u')})"); return
         if name == 'ds_write_b32': self.emit(f"if (ex) {{ uint dm_; InterlockedExchange({W(f'{base} + {off}u')}, v{d0}, dm_); }}"); return
         if name in ('ds_read2_b32', 'ds_read2st64_b32'):
