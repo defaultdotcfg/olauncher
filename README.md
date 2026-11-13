@@ -16,17 +16,17 @@
   <a href="https://github.com/defaultdotcfg/rushlauncher/issues">Reportar um bug</a>
 </p>
 
-> [!IMPORTANT]
-> O RushLauncher é um projeto de fãs, **não oficial**, sem nenhuma ligação com a Codemasters ou a Electronic Arts. **Este repositório e as releases não contêm nenhum arquivo do jogo**: nada de executáveis, DLLs do sistema do console, assets ou shaders (originais ou traduzidos). Para jogar, você precisa da **sua própria cópia** do pacote do jogo. Os shaders são lidos e traduzidos na sua máquina, a partir dessa cópia.
+> [!IMPORTANTE]
+> O RushLauncher **não contêm nenhum arquivo do jogo**. Para jogar, você precisa da **sua própria cópia** do pacote do jogo. Os shaders são lidos e traduzidos na sua máquina, a partir dessa cópia.
 
-> [!NOTE]
-> O RushLauncher é um **projeto de hobby**, feito no tempo livre, **sem manutenção ativa** e **sem cronograma de atualizações**: novas versões saem quando (e se) houver tempo. Pull requests são bem-vindos, mas **provavelmente não serão revisados**.
+> [!NOTA]
+> Este é um **projeto de hobby**, feito no meu tempo livre, **sem manutenção ativa** e **sem cronograma de atualizações**: novas versões saem quando (e se) houver tempo. Pull requests são bem-vindos, mas **provavelmente não serão revisados**.
 
 **Conteúdo:** [O que é](#o-que-é-o-rushlauncher) · [Destaques](#destaques) · [Download](#download) · [Início rápido](#início-rápido) · [Controles](#controles) · [Configurações](#configurações) · [Dicas](#dicas) · [Perguntas frequentes](#perguntas-frequentes-e-problemas) · [Próximos passos](#próximos-passos) · [Para desenvolvedores](#para-desenvolvedores) · [Créditos](#créditos) · [Licença](#licença) · [Aviso legal](#aviso-legal)
 
 ## O que é o RushLauncher?
 
-O ONRUSH saiu para Xbox One e PlayStation 4, mas nunca para PC. O RushLauncher roda o executável de Xbox One do jogo direto no Windows, sem emulador. Ele substitui as bibliotecas do sistema do console por versões próprias e traduz para o Direct3D 12 do PC as chamadas gráficas e os shaders da GPU do Xbox (GCN).
+RushLauncher roda o executável de Xbox One do jogo direto no Windows, sem emulador. Ele substitui as bibliotecas do sistema do console por versões próprias e traduz para o Direct3D 12 do PC as chamadas gráficas e os shaders da GPU do Xbox (GCN).
 
 O launcher cuida de tudo: prepara o jogo a partir da sua cópia, aplica o patch da versão final, traduz os shaders e abre o jogo. Veja [Como funciona](#como-funciona).
 
@@ -40,7 +40,7 @@ O launcher cuida de tudo: prepara o jogo a partir da sua cópia, aplica o patch 
 - **Perfis.** Vários jogadores, cada um com o próprio save e as próprias horas de jogo.
 - **Modo foto.** **F12** salva a imagem do jogo sem a interface, em PNG ou JPG. A aba **Fotos** mostra a galeria.
 - **Atualização automática.** O launcher procura novas versões no GitHub e se atualiza sozinho, mantendo configurações, saves e shaders.
-- **Discord Rich Presence**, idiomas do texto e da voz do jogo, e launcher em português, inglês e espanhol.
+- **Discord Rich Presence (em implantação)**, idiomas do texto e da voz do jogo, e launcher em português, inglês e espanhol.
 
 ## Download
 
@@ -60,13 +60,12 @@ O que mudou em cada versão está no [CHANGELOG](CHANGELOG.md).
 
 - Windows 10 ou 11, 64 bits.
 - GPU com Direct3D 12 (feature level 12_0) e driver atualizado.
-- Disco NTFS (os atalhos `dat\` e `EmbeddedXvd\` são junctions).
 - A sua cópia do jogo: o pacote extraído do ONRUSH para Xbox One (a pasta com `Mount\` e `EmbeddedXvd\`). Se ela for a versão 1.0.64980.34, também a pasta do patch da versão 1.80.100.100.
-- Espaço: ~60 MB para o jogo preparado, mais ~1 GB para os shaders traduzidos.
+- Espaço: ~36 GB para o jogo preparado com o patch e shaders traduzidos. 
 
 ## Início rápido
 
-1. Extraia o zip inteiro numa pasta, num disco NTFS.
+1. Extraia o zip nem qualquer pasta.
 2. Abra o `OnRushLauncher.exe` e escolha a pasta da sua cópia do jogo (o pacote extraído, com `Mount\` e `EmbeddedXvd\`).
 3. Se a cópia não estiver na versão final, o launcher pede a pasta do patch 1.80.100.100 e aplica as diferenças. Os pacotes novos são **movidos** da pasta do patch para a cópia: no mesmo disco, isso é instantâneo e não ocupa espaço extra.
 4. O launcher prepara o jogo na própria pasta: copia o executável e os arquivos pequenos, liga `dat\` e `EmbeddedXvd\` à sua cópia e cria o `onrush-pc.exe`. A sua cópia não é alterada.
