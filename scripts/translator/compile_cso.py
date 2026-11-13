@@ -52,15 +52,17 @@ def work(f):
     return f, compile_one(f)
 
 
-def workers(n, per_worker=350 << 20, cap=12):
-    """Parallel processes: one per core (minus one), at most `cap`, and `per_worker` bytes of free RAM each."""
+def workers(n, per_worker=200 << 20, cap=16):
+    """Parallel processes: one per logical core, at most `cap`, and `per_worker` bytes of free RAM each.
+    Measured on 16 threads (13360 jobs): 12 workers 200 s, 16 workers 171 s; a worker peaks near 85 MB."""
     import ctypes
     class MS(ctypes.Structure):
         _fields_ = [('len', ctypes.c_ulong), ('load', ctypes.c_ulong)] + [(k, ctypes.c_ulonglong) for k in
                    ('total', 'avail', 'tpage', 'apage', 'tvirt', 'avirt', 'aext')]
+    if os.environ.get('TRANSLATOR_WORKERS'): return max(1, min(int(os.environ['TRANSLATOR_WORKERS']), n))   # measurements
     ms = MS(); ms.len = ctypes.sizeof(MS)
     ram = ms.avail if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)) else 4 << 30
-    return max(1, min(cap, (os.cpu_count() or 4) - 1, int(ram // per_worker), n))
+    return max(1, min(cap, os.cpu_count() or 4, int(ram // per_worker), n))
 
 
 def run(d, progress=None, log=print, cancelled=lambda: False):

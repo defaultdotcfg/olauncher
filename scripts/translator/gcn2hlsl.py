@@ -12,9 +12,55 @@ Model
   * image_sample* are emitted at top level unpredicated (derivatives), results assigned predicated.
 Unsupported things are emitted as `// TODO` and counted.
 """
-import sys, re, struct, os, json
+import sys, re as _re, struct, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gcn_dis as G
+
+
+class _ReCache:
+    """`re` with a plain dict of compiled patterns: the translator calls re.fullmatch/search/... with literal patterns
+    hundreds of thousands of times per run, and re's own cache lookup (_compile) cost more than the matching."""
+    def __init__(self): self._c = {}
+
+    def _p(self, p, flags=0):
+        r = self._c.get((p, flags))
+        if r is None: r = self._c[(p, flags)] = _re.compile(p, flags)
+        return r
+
+    def fullmatch(self, p, s, flags=0): return self._p(p, flags).fullmatch(s)
+    def match(self, p, s, flags=0): return self._p(p, flags).match(s)
+    def search(self, p, s, flags=0): return self._p(p, flags).search(s)
+    def findall(self, p, s, flags=0): return self._p(p, flags).findall(s)
+    def finditer(self, p, s, flags=0): return self._p(p, flags).finditer(s)
+    def sub(self, p, r, s, count=0, flags=0): return self._p(p, flags).sub(r, s, count)
+    def subn(self, p, r, s, count=0, flags=0): return self._p(p, flags).subn(r, s, count)
+    def split(self, p, s, maxsplit=0, flags=0): return self._p(p, flags).split(s, maxsplit)
+    def __getattr__(self, n): return getattr(_re, n)
+
+
+re = _ReCache()
+
+
+class _Env:
+    """os.environ.get for the translator's debug switches: a dict snapshot taken by translate() (os.environ lookups
+    encode the key on every call and sat in the per-instruction paths)."""
+    snap = None
+
+    def get(self, k, d=None):
+        s = self.snap
+        return (os.environ if s is None else s).get(k, d)
+
+
+_ENV = _Env()
+_PJ = (None, None)   # (mtime, shader_patches.json) loaded once per change
+
+
+def _patches_json():
+    global _PJ
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'shader_patches.json')
+    t = os.path.getmtime(p)
+    if _PJ[0] != t: _PJ = (t, json.load(open(p)))
+    return _PJ[1]
 SIF_FORCE = False   # set per shader by build_shader_cache.py (shader_patches.json "_scalar_if")
 SIF_ANY64 = False   # set per shader ("_sif_any64"): in a 64-thread CS, structured vccz/vccnz branches test the whole group (= one GCN wave), not each lane
 
@@ -43,13 +89,13 @@ def _lds_sync(body):
 
 def _sig_int(e):
     """Signature component type 1 = uint, 2 = int (3 = float). Integer attributes are flat in the PS."""
-    return e.get('ct') in (1, 2) and e.get('sv', 0) == 0 and not os.environ.get('NO_INT_SIG')
+    return e.get('ct') in (1, 2) and e.get('sv', 0) == 0 and not _ENV.get('NO_INT_SIG')
 def _sig_ty(e, nc):
     base = ('uint' if e.get('ct') == 1 else 'int') if _sig_int(e) else 'float'
     return base + (str(nc) if nc > 1 else '')
 
 def parse_dxbc_sig(path):
-    b = open(path, 'rb').read()
+    b = G.read_file(path)
     n = struct.unpack_from('<I', b, 0x1C)[0]
     chunks = {}
     for i in range(n):
@@ -73,7 +119,7 @@ def parse_dxbc_sig(path):
 
 def parse_decls(path):
     """DXBC SHEX declarations -> {(space, reg): (kind, stride)}; kind in 'SB' (structured SRV), 'RB' (raw SRV), 'USB' (structured UAV)"""
-    b = open(path, 'rb').read()
+    b = G.read_file(path)
     n = struct.unpack_from('<I', b, 0x1C)[0]
     out = {}
     for i in range(n):
@@ -111,10 +157,10 @@ class Tr:
         self.kind, self.ins, self.outs = parse_dxbc_sig(path)
         # DS_AS_VS=1: translate a domain shader as a plain function of ONE control point (tessellation bypass):
         # LDS control-point reads -> cp_[dword], patch-constant reads -> pc_[dword], domain coords = (0, 0)
-        self.ds_cp = bool(os.environ.get('DS_AS_VS'))
+        self.ds_cp = bool(_ENV.get('DS_AS_VS'))
         if self.ds_cp: self.kind = 'vs'; self.ins = []
         # LS_AS_FN=1 (with GCN_PROG=<LS program>): the LS writes its control point to LDS -> static cp_[dword]
-        self.ls_cp = bool(os.environ.get('LS_AS_FN'))
+        self.ls_cp = bool(_ENV.get('LS_AS_FN'))
         self.sg = {}            # sgpr -> ('u', hlsl uint expr) | ('desc', kind, base, idx)
         self.body = []; self.todo = []
         self.decl = set()       # declared resource names
@@ -152,7 +198,7 @@ class Tr:
     def desc_dims(self, n, v):
         """T# dword 2 (width-1 | height-1 << 14) or dword 4 (depth-1 | pitch-1 << 13) read as data (s_bfe on the
         descriptor, e.g. to get the texture size): rebuilt from GetDimensions. None if not such a dword."""
-        if os.environ.get('NO_DESC_DIMS') or v[0] != 'desc' or v[1] != 'T': return None
+        if _ENV.get('NO_DESC_DIMS') or v[0] != 'desc' or v[1] != 'T': return None
         e = getattr(self, 'desc_dw', {}).get(n)
         if e is None or e[1] is not v or e[0] % 8 not in (2, 4): return None
         try: tn, tidx = self.resolve('T', v)
@@ -235,7 +281,7 @@ class Tr:
     # stage counters `s_cmp_gt_u32 s2, 0x800`). Commenting such a loop out ran its body once and left the
     # particle sort keys unsorted (splash/spray draw ranges of 0..2 particles). NO_UNIFORM_LOOPS=1 = old behaviour.
     def _uniform_loop(self, at, extra):
-        if os.environ.get('NO_UNIFORM_LOOPS'): return False
+        if _ENV.get('NO_UNIFORM_LOOPS'): return False
         for e in extra:
             L = self.body[e].strip()
             if L == '}': continue
@@ -250,7 +296,7 @@ class Tr:
 
     # ---------------- translation
     def run(self):
-        raw = open(self.path, 'rb').read()
+        raw = G.read_file(self.path)
         blob = G.extract_code_from_dxbc(self.path)
         s0, e0 = G.find_code(blob)
         self.blob = blob; self.code_start = s0
@@ -265,8 +311,8 @@ class Tr:
         # `s_branch L` as the last instruction of such a block turns it into `} else {` up to L.
         # opt-in for CS (globally it blacked out the compute lighting; see RESUMO); on by default for VS/PS,
         # where an ignored uniform branch runs both sides and the else side overwrites the result.
-        structured = (os.environ.get('SCALAR_IF') is not None or SIF_FORCE
-                      or (self.kind in ('vs', 'ps') and not os.environ.get('NO_GFX_SCALAR_IF')))
+        structured = (_ENV.get('SCALAR_IF') is not None or SIF_FORCE
+                      or (self.kind in ('vs', 'ps') and not _ENV.get('NO_GFX_SCALAR_IF')))
         blk = []   # stack of [end pc, index of the `if` line in self.body, [indices of `} else {` lines]]
         def close_block():
             end, at, elses = blk.pop()[:3]
@@ -281,7 +327,7 @@ class Tr:
         # Loops: a backward branch to label T becomes `[loop] for (...) { <T..P> if (!taken) break; }`.
         LOOP_OPS = {'s_cbranch_scc1': 'scc != 0u', 's_cbranch_scc0': 'scc == 0u', 's_cbranch_vccnz': 'vcc', 's_cbranch_vccz': '!vcc',
                     's_cbranch_execnz': 'ex', 's_cbranch_execz': '!ex', 's_branch': 'true'}
-        loops_on = os.environ.get('NO_LOOPS') is None
+        loops_on = _ENV.get('NO_LOOPS') is None
         heads = {}
         if loops_on:
             for (pc_, op_, args_) in ins:
@@ -299,16 +345,16 @@ class Tr:
         # Else-gate (predicated mode): `s_cbranch_scc* L ... s_branch E ; L: <else> ; E:` - the <else> block is only
         # reachable through the scalar branch, so it runs only when that branch was taken (jk_L), instead of always
         # overwriting the `then` result. NO_ELSE_GATE=1 = old behaviour.
-        egate_on = not os.environ.get('NO_ELSE_GATE')
+        egate_on = not _ENV.get('NO_ELSE_GATE')
         # per-shader exclusions: shader_patches.json "_else_gate_skip": {"<fnv>": ["<label hex>", ...]}
         # (e.g. volumetric-fog blocks whose input volume is not produced yet: gating them darkens everything)
         eg_skip = set()
         try:
-            _pj = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'shader_patches.json')))
+            _pj = _patches_json()
             _mh = re.search(r'pso_h([0-9a-f]{16})_', os.path.basename(self.path))
             if _mh: eg_skip = {int(x, 16) for x in _pj.get('_else_gate_skip', {}).get(_mh.group(1), [])}
         except Exception: pass
-        eg_skip |= {int(x, 16) for x in os.environ.get('ELSE_GATE_SKIP', '').split(',') if x}
+        eg_skip |= {int(x, 16) for x in _ENV.get('ELSE_GATE_SKIP', '').split(',') if x}
         scc_tgts = {}
         for (pc_, op_, args_) in ins:
             if op_ in ('s_cbranch_scc0', 's_cbranch_scc1'):
@@ -323,7 +369,7 @@ class Tr:
         # Descriptor tracking and compile-time constants at labels reached only by a jump (the previous instruction is s_branch/s_endpgm): start from
         # the state at the branch that jumps there, not from the end of the code above it (that code may reuse the
         # SGPRs holding a T#/S# or a table pointer for something else). NO_LABEL_DESC=1 = old behaviour.
-        fwd_snap = {}; label_desc = not os.environ.get('NO_LABEL_DESC')
+        fwd_snap = {}; label_desc = not _ENV.get('NO_LABEL_DESC')
         for k, (pc, op, args) in enumerate(ins):
             P = int(pc, 16)
             if label_desc:
@@ -360,9 +406,9 @@ class Tr:
             # Loop guard (CS too): a uniform forward s_cbranch_scc* that stays inside the current loop, e.g.
             # `s_cmp_ge i, n ; s_cbranch_scc0 L ; s_andn2 keep, keep, exec ; s_cbranch_scc0 exit ; L:` - predicating it ran the
             # andn2 every iteration and killed every lane at once (clustered light/probe lists came out empty). NO_LOOP_SIF=1 = old.
-            loop_sif = (not structured and lps and not os.environ.get('NO_LOOP_SIF') and op in ('s_cbranch_scc0', 's_cbranch_scc1')
+            loop_sif = (not structured and lps and not _ENV.get('NO_LOOP_SIF') and op in ('s_cbranch_scc0', 's_cbranch_scc1')
                         and tgt(args) is not None and P < tgt(args) <= lps[-1][1] and (not gates or tgt(args) <= gates[-1][0]))
-            if (structured or loop_sif) and (op in ('s_cbranch_scc0', 's_cbranch_scc1') or ((os.environ.get('SCALAR_IF_VCC') or SIF_FORCE) and op in ('s_cbranch_vccz', 's_cbranch_vccnz'))):
+            if (structured or loop_sif) and (op in ('s_cbranch_scc0', 's_cbranch_scc1') or ((_ENV.get('SCALAR_IF_VCC') or SIF_FORCE) and op in ('s_cbranch_vccz', 's_cbranch_vccnz'))):
                 T = tgt(args)
                 uniform = True
                 if op.startswith('s_cbranch_scc'):
@@ -381,7 +427,7 @@ class Tr:
                     # the else side starts from the state at the branch, not from the end of the `then` side: restore the
                     # compile-time constants/symbolic offsets/descriptor tracking (a `then` that reused s2 for a float constant turned the
                     # else side's dynamic descriptor offset into a huge static one). NO_ELSE_SYM=1 = old behaviour.
-                    if len(blk[-1]) > 3 and not os.environ.get('NO_ELSE_SYM'):
+                    if len(blk[-1]) > 3 and not _ENV.get('NO_ELSE_SYM'):
                         self.sym, self.cval, self.sg, self.origin = (dict(x) for x in blk[-1][3])
                     continue
             if egate_on and not structured:
@@ -402,7 +448,7 @@ class Tr:
             try:
                 self.one(pc, op, args)
             except Exception as ex:
-                m_ = re.match(r'v(?:\[(\d+):(\d+)\]|(\d+))', args.strip()) if op.startswith('image_sample') and os.environ.get('STUB_IMAGE') else None
+                m_ = re.match(r'v(?:\[(\d+):(\d+)\]|(\d+))', args.strip()) if op.startswith('image_sample') and _ENV.get('STUB_IMAGE') else None
                 if m_:
                     # STUB_IMAGE=1: a sample whose descriptor cannot be resolved (dead path in practice) returns 0
                     lo_ = int(m_.group(1) or m_.group(3)); hi_ = int(m_.group(2) or m_.group(3))
@@ -503,7 +549,7 @@ class Tr:
                         self.setu(d, self.src(sv, 'u')); self.embed_regs[d] = er[n_]; return
                 # d no longer holds an embedded-table base (1.80 CS reuse s[16:19] for a UAV counter V# built from
                 # the counter pointer at UAV descriptor +16; the stale entry made that atomic "embedded")
-                if d in er and not os.environ.get('OLD_EMBED_KEEP'): er.pop(d, None)
+                if d in er and not _ENV.get('OLD_EMBED_KEEP'): er.pop(d, None)
                 if op == 's_movk_i32': self.setu(d, f"{int(sv) & 0xFFFFFFFF}u"); self.cval[d] = int(sv) & 0xFFFFFFFF; self.sym[d] = (int(sv) & 0xFFFFFFFF, None, 1)
                 elif re.fullmatch(r's\d+', sv) and self.sg.get(int(sv[1:]), ('u',))[0] == 'desc':
                     self.sg[d] = self.sg[int(sv[1:])]
@@ -532,7 +578,7 @@ class Tr:
             self.emit(f"{dt} = {e};"); self.decl.add(dt); self.emit("scc = (" + dt + ");"); return
         if op == 's_and_saveexec_b64':
             dt = self.mask_target(A[0]); x = self.maskval(A[1])
-            if re.search(rf"\b{dt}\b", x) and not os.environ.get('OLD_SAVEEXEC'):
+            if re.search(rf"\b{dt}\b", x) and not _ENV.get('OLD_SAVEEXEC'):
                 # s_and_saveexec s[N:N+1], s[N:N+1]: read the condition before the save overwrites it
                 self.decl.add(dt)
                 self.emit(f"sx_ = {x};"); self.emit(f"{dt} = ex;"); self.emit("ex = ex && sx_;"); return
@@ -571,7 +617,7 @@ class Tr:
                 if op in ('s_lshl_b32', 's_add_u32'):
                     for z_i, z_ in enumerate((x_, y_)):
                         if not (z_ and z_[1] and re.fullmatch(r'u\d+', z_[1])): continue
-                        if os.environ.get('OLD_DYN_SNAP') is not None and z_[1] != f"u{d}": continue
+                        if _ENV.get('OLD_DYN_SNAP') is not None and z_[1] != f"u{d}": continue
                         snap = self.t(); self.emit(f"uint {snap} = {z_[1]};")
                         if z_i == 0: x_ = (x_[0], snap, x_[2])
                         else: y_ = (y_[0], snap, y_[2])
@@ -596,7 +642,7 @@ class Tr:
             return
         if op == 's_bcnt1_i32_b64':
             d = int(A[0][1:])
-            if os.environ.get('NO_SM6') is None:
+            if _ENV.get('NO_SM6') is None:
                 self.sm6 = True; c = self.t()
                 self.emit(f"uint {c} = WaveActiveCountBits({self.maskval(A[1])});")
                 self.setu(d, c); self.emit(f"scc = ({c} != 0u) ? 1u : 0u;"); return
@@ -654,7 +700,7 @@ class Tr:
             else: bname = f"ud{self.origin.get(b0, b0)}"; bkind = 'UD'
             if op.startswith('s_buffer') and dynx is not None: static = None     # dynamic SGPR offset: use the runtime value
             if (op.startswith('s_buffer') and static is None and not off.startswith(('lit:', '0x')) and n > 1
-                    and d0 <= int(off[1:]) < d0 + n - 1 and os.environ.get('NO_SELF_OFF') is None):
+                    and d0 <= int(off[1:]) < d0 + n - 1 and _ENV.get('NO_SELF_OFF') is None):
                 # the offset register is one of the destinations (s_buffer_load_dwordx2 s[4:5], .., s4): the dwords
                 # after it must still be read at the OLD offset. Freeze it first. NO_SELF_OFF=1 = old behaviour.
                 so_ = self.t(); self.emit(f"{so_} = {boff};"); boff = f"({so_})"
@@ -690,7 +736,7 @@ class Tr:
                         else: self.setu(d0 + k, f"{nm}.Load({boff} + {4*k}u)")
             else:
                 stride = {8: 32, 4: 16}.get(n)
-                if dynx is not None and n in (8, 4, 16) and os.environ.get('NO_DYN_SNAP') is None:
+                if dynx is not None and n in (8, 4, 16) and _ENV.get('NO_DYN_SNAP') is None:
                     # the index register may be reused before the sample: freeze its value at descriptor-load time
                     # declared at function scope: the index may be used again from another block (texture size queries)
                     ds_ = self.t(); self.emit(f"{ds_} = {dynx[0]};"); dynx = (ds_, dynx[1])
@@ -745,7 +791,7 @@ class Tr:
                 co = f"uint{nco}(" + ", ".join(f"v{va + q}" for q in range(nco)) + ")"
                 if op == 'image_store':
                     if dm != 0xF: raise ValueError("partial-mask image_store")
-                    if os.environ.get('NO_NAN_SCRUB'): self.emit(f"if (ex) {tn}[{tidx}][{co}] = float4(asfloat(v{vd0}), asfloat(v{vd0+1}), asfloat(v{vd0+2}), asfloat(v{vd0+3}));")
+                    if _ENV.get('NO_NAN_SCRUB'): self.emit(f"if (ex) {tn}[{tidx}][{co}] = float4(asfloat(v{vd0}), asfloat(v{vd0+1}), asfloat(v{vd0+2}), asfloat(v{vd0+3}));")
                     else:
                         tq = self.t(); self.emit(f"float4 {tq} = float4(asfloat(v{vd0}), asfloat(v{vd0+1}), asfloat(v{vd0+2}), asfloat(v{vd0+3})); {tq} = isnan({tq}) ? 0.0 : {tq};")
                         self.emit(f"if (ex) {tn}[{tidx}][{co}] = {tq};")
@@ -779,9 +825,9 @@ class Tr:
                     sn, sidx = self.resolve('S', Sh)
             ti = tidx
             lz = op.endswith('_lz') or op.endswith('_l'); c = op.endswith('_c') or '_c_' in op
-            use_cmp = c and op.startswith('image_sample') and not os.environ.get('NO_SAMPLE_CMP')
+            use_cmp = c and op.startswith('image_sample') and not _ENV.get('NO_SAMPLE_CMP')
             if sn is not None: self.decl.add(('SC' if use_cmp else 'S', sn))
-            if sn is not None and not use_cmp and not os.environ.get('NO_SAMP_ALT'):
+            if sn is not None and not use_cmp and not _ENV.get('NO_SAMP_ALT'):
                 # GCN ignores a sampler's compare function on non-compare ops, so the game may reuse the shadow
                 # (comparison) sampler SGPRs for a plain sample; HLSL cannot. Remember the last plain sampler these
                 # SGPRs held; assemble() swaps it in when sn also ends up declared as SamplerComparisonState.
@@ -834,11 +880,11 @@ class Tr:
                 e = (f"float4(f16tof32(v{r0} & 0xFFFF), f16tof32(v{r0} >> 16), "
                      f"f16tof32(v{r1} & 0xFFFF), f16tof32(v{r1} >> 16))")
             else: e = f"float4(asfloat(v{r0}), asfloat(v{r1}), asfloat(v{r2}), asfloat(v{r3}))"
-            if tgt.startswith('mrt') and not os.environ.get('NO_NAN_SCRUB'):
+            if tgt.startswith('mrt') and not _ENV.get('NO_NAN_SCRUB'):
                 tq = self.t(); self.emit(f"float4 {tq} = {e}; {tq} = isnan({tq}) ? 0.0 : {tq};"); e = tq
             self.emit(f"{tgt}_o = ex ? {e} : {tgt}_o;"); self.exps.append(tgt)
             # 'done vm': exec is the pixel valid mask -> lanes switched off by a kill (alpha test) are discarded.
-            if self.kind == 'ps' and done and vm and not os.environ.get('NO_PS_KILL'): self.emit("if (!ex) discard;")
+            if self.kind == 'ps' and done and vm and not _ENV.get('NO_PS_KILL'): self.emit("if (!ex) discard;")
             return
         # ---- vector compare
         mc = re.fullmatch(r'v_cmp(x?)_(\w+?)_(f32|i32|u32)', op)
@@ -860,7 +906,7 @@ class Tr:
             d = vd(); mk = self.maskval(A[3]) if len(A) > 3 else 'vcc'
             # v_cndmask is a bitwise select: select the raw bits as uint. Selecting asfloat(int) values on the GPU
             # flushes denormals (small integers such as voxel coordinates) to 0. NO_UINT_CNDMASK=1 = old float select.
-            if os.environ.get('NO_UINT_CNDMASK') is None and not any(a.strip().startswith('|') or (a.strip().startswith('-') and not re.fullmatch(r'-\d+(\.\d+)?|-0x[0-9a-f]+', a.strip())) for a in A[1:3]):
+            if _ENV.get('NO_UINT_CNDMASK') is None and not any(a.strip().startswith('|') or (a.strip().startswith('-') and not re.fullmatch(r'-\d+(\.\d+)?|-0x[0-9a-f]+', a.strip())) for a in A[1:3]):
                 self.setv(d, f"asfloat({mk} ? {self.src(A[2], 'u')} : {self.src(A[1], 'u')})"); return
             y0 = self.src(A[1], 'f'); y1 = self.src(A[2], 'f')
             self.setv(d, f"{mk} ? {y1} : {y0}"); return
@@ -955,7 +1001,7 @@ class Tr:
             base = int(mr.group(1)) if lo else int(mr.group(1)) - 1
             mname = f"sp_{base}"
             if mname not in self.decl: raise ValueError("mbcnt on non-lane-mask sgpr")
-            if os.environ.get('NO_SM6') is None:
+            if _ENV.get('NO_SM6') is None:
                 # SM6: the lo half yields the full prefix count, the hi half adds nothing
                 self.sm6 = True
                 if lo: self.setv(vd(), f"asfloat(WavePrefixCountBits({mname}) + {U(A[2])})")
@@ -984,7 +1030,7 @@ class Tr:
                 if mm_ and int(mm_.group(1)) in self.counter_base:
                     nmc = self.counter_base[int(mm_.group(1))]; tt = self.t()
                     mreg = re.fullmatch(r'SB_u(\d+)_sp(\d+)', nmc); cidx = ((int(mreg.group(1)) & 1023) | ((int(mreg.group(2)) & 7) << 10)) if mreg else 0
-                    if os.environ.get('CTR_MODE', 'inc') == 'inc':
+                    if _ENV.get('CTR_MODE', 'inc') == 'inc':
                         self.emit(f"uint {tt} = 0; if (ex) {tt} = {nmc}.IncrementCounter();")
                     else:
                         self.uses_ctr = True
@@ -992,7 +1038,7 @@ class Tr:
                     self.setv(vd(), f"asfloat({tt})"); return
         if name == 'v_readfirstlane_b32':
             d = int(A[0][1:])
-            if os.environ.get('NO_SM6') is None:
+            if _ENV.get('NO_SM6') is None:
                 self.sm6 = True; self.setu(d, f"rfl_({U(A[1])}, ex)"); return
             if self.kind == 'cs':
                 self.uses_wave = True
@@ -1017,7 +1063,7 @@ class Tr:
             ty = 'i' if name.endswith('i32') else 'u'; fn = 'min' if 'min' in name else 'max'
             cv = (lambda x: f"asuint({fn}({self.src(A[1], 'i')}, {self.src(A[2], 'i')}))") if ty == 'i' else (lambda x: f"{fn}({U(A[1])}, {U(A[2])})")
             self.setv(vd(), f"asfloat({cv(0)})"); return
-        if name in ('v_cvt_f64_f32', 'v_add_f64', 'v_mul_f64', 'v_max_f64', 'v_min_f64', 'v_cvt_f32_f64') and not os.environ.get('NO_F64'):
+        if name in ('v_cvt_f64_f32', 'v_add_f64', 'v_mul_f64', 'v_max_f64', 'v_min_f64', 'v_cvt_f32_f64') and not _ENV.get('NO_F64'):
             # 64-bit float ops (a register pair holds the double); seen in a one-off lookup-table compute shader
             raw = args.strip(); clamp_ = raw.endswith(' clamp')
             if clamp_: raw = raw[:-6]
@@ -1138,11 +1184,11 @@ class Tr:
 
     def resolve_buf(self, base, b0):
         """descriptor source -> (kind 'cb'|'ba'|'sb', name, stride)"""
-        if (base is None or base[0] != 'desc') and b0 in getattr(self, 'sg_hist', {}) and os.environ.get('NO_DESC_HIST') is None:
+        if (base is None or base[0] != 'desc') and b0 in getattr(self, 'sg_hist', {}) and _ENV.get('NO_DESC_HIST') is None:
             # linear translation lost the descriptor on another control-flow path: use the last descriptor loaded here
             pidx_ = self.pmap.get(self.origin.get(b0, b0)) if self.pmap else None
             P_ = [p for p in self.rs_params if p['i'] == pidx_] if pidx_ is not None else []
-            if not (P_ and P_[0]['type'] in (('CBV',) if os.environ.get('NO_ROOT_UAV') else ('CBV', 'UAV', 'SRV'))): base = self.sg_hist[b0]
+            if not (P_ and P_[0]['type'] in (('CBV',) if _ENV.get('NO_ROOT_UAV') else ('CBV', 'UAV', 'SRV'))): base = self.sg_hist[b0]
         if base is None or base[0] != 'desc':
             ud = self.origin.get(b0, b0)
             if self.pmap is None:
@@ -1151,7 +1197,7 @@ class Tr:
             P = [p for p in self.rs_params if p['i'] == pidx]
             if P and P[0]['type'] == 'CBV':
                 nm = f"RootCBV_b{P[0]['reg']}_sp{P[0]['space']}"; self.bufs[nm] = ('CBV', P[0]['reg'], P[0]['space']); return 'cb', nm, 0
-            if P and P[0]['type'] in ('UAV', 'SRV') and not os.environ.get('NO_ROOT_UAV'):
+            if P and P[0]['type'] in ('UAV', 'SRV') and not _ENV.get('NO_ROOT_UAV'):
                 # root UAV/SRV (a raw GPU address in user data; the shader builds the rest of the V# itself)
                 reg, space = P[0]['reg'], P[0]['space']; dk = self.decls.get((space, reg))
                 if P[0]['type'] == 'UAV' and dk and dk[0] == 'USB':
@@ -1165,7 +1211,7 @@ class Tr:
         ud, static = base[4], base[5]
         if ud is None or static is None: raise ValueError("nested buffer descriptor")
         if self.pmap is None:
-            self.acc.append((ud, 'W' if getattr(self, '_buf_store', False) and not os.environ.get('NO_STORE_UAV') else 'B', static)); return 'cb', 'Dummy', 0
+            self.acc.append((ud, 'W' if getattr(self, '_buf_store', False) and not _ENV.get('NO_STORE_UAV') else 'B', static)); return 'cb', 'Dummy', 0
         pidx = self.pmap.get(ud)
         self._counter_hit = False
         f = self.find_range(pidx, static, 'B') if pidx is not None else None
@@ -1426,7 +1472,7 @@ class Tr:
             h.append("struct PSIn {")
             # 'nointerpolation' on float inputs changes fxc's register packing vs the VS -> PSO rejected;
             # only used when FLAT_FLOAT=1. Integer attributes (sig ct 1/2) are declared uint/int instead.
-            flat = (getattr(self, 'flat_attrs', set()) - getattr(self, 'interp_attrs', set())) if os.environ.get('FLAT_FLOAT') else set()
+            flat = (getattr(self, 'flat_attrs', set()) - getattr(self, 'interp_attrs', set())) if _ENV.get('FLAT_FLOAT') else set()
             ak = 0
             for e in self.ins:
                 if e['sv'] == 0:
@@ -1478,13 +1524,13 @@ class Tr:
             self.vs_attrs = []
             for e in self.ins:
                 if e['sv'] == 0:
-                    nc = bin(e['mask']).count('1'); ty = _sig_ty(e, nc) if not os.environ.get('NO_INT_VSIN') else 'float' + (str(nc) if nc > 1 else '')
+                    nc = bin(e['mask']).count('1'); ty = _sig_ty(e, nc) if not _ENV.get('NO_INT_VSIN') else 'float' + (str(nc) if nc > 1 else '')
                     params.append(f"{ty} in_{e['name']}{e['idx']} : {e['name']}{e['idx']}"); self.vs_attrs.append((e, nc))
             if any(e['name'] == 'SV_InstanceID' for e in self.ins): params.insert(1, "uint iid : SV_InstanceID")
             h.append("VSOut main(" + ", ".join(params) + ") {")
         import re as _re
         if self.kind == 'cs' and getattr(self, 'uses_lds', False) and not getattr(self, 'has_s_barrier', False) \
-                and not os.environ.get('NO_LDS_SYNC'):
+                and not _ENV.get('NO_LDS_SYNC'):
             tg_ = self.decls.get('tg', (1, 1, 1))
             if tg_[0] * tg_[1] * tg_[2] <= 64:
                 self.body, bad_ = _lds_sync(self.body)
@@ -1499,7 +1545,7 @@ class Tr:
         self.body = [_re.sub(r"@@MOVRELS (\d+) (\d+)@@", _movrels, l_) for l_ in self.body]
         h.append("  uint " + ", ".join(f"v{k}" for k in range(nv_)) + ";")
         for k in range(nv_): h.append(f"  v{k} = 0;")
-        if self.kind == 'ps' and not os.environ.get('NO_PS_INPUT_ENA'):
+        if self.kind == 'ps' and not _ENV.get('NO_PS_INPUT_ENA'):
             # PS input VGPRs follow SPI_PS_INPUT_ENA (dword 216 of the Xbox shader header): I/J pairs first, then
             # POS_X/Y/Z/W, FRONT_FACE... Before, all were 0, so shaders using the pixel position read texel (0,0).
             ena = self.ps_input_ena()
@@ -1525,11 +1571,11 @@ class Tr:
             if any(e['name'] == 'SV_InstanceID' for e in self.ins): h.append("  v3 = iid;")
             # the Xbox fetch shader gives every vertex attribute 4 VGPRs (v4 + 4*i), whatever its width
             # (checked against all dumped multi-attribute VS); NO_ALIGNED_VS_IN=1 = old packed layout
-            packed_in = bool(os.environ.get('NO_ALIGNED_VS_IN'))
+            packed_in = bool(_ENV.get('NO_ALIGNED_VS_IN'))
             # attributes the shader never reads (signature rw mask 0) are not fetched and take no VGPRs
             # (skinned depth-prepass VS: POSITION v4, BLENDWEIGHTS v8, BLENDINDICES v12 with NORMAL/TANGENT/
             # TEXCOORD unused); OLD_UNUSED_SLOTS=1 = old layout that gave every declared attribute a slot
-            keep_unused = bool(os.environ.get('OLD_UNUSED_SLOTS'))
+            keep_unused = bool(_ENV.get('OLD_UNUSED_SLOTS'))
             vreg = 4; slot = 0
             for ai, (e, nc) in enumerate(self.vs_attrs):
                 if not keep_unused and e.get('rw', 1) == 0: continue
@@ -1559,24 +1605,26 @@ class Tr:
         h.append("  bool ex = true, vcc = false, sx_ = false;")
         masks = {x for x in self.decl if isinstance(x, str) and x.startswith('sp_')}
         # masks read before any write in the translated order (e.g. restored after a branch) still need a declaration
-        masks |= set(re.findall(r'\bsp_\d+\b', "\n".join(self.body)))
+        # one pass over the body for the three kinds of names (sp_ masks, jk_ branch flags, wl_ v_writelane spill slots)
+        names = set(re.findall(r'\b(?:sp_\d+|jk_[0-9a-f]+|wl_\d+_\d+)\b', "\n".join(self.body)))
+        masks |= {x for x in names if x.startswith('sp_')}
         masks = sorted(masks)
         if masks: h.append("  bool " + ", ".join(f"{m} = false" for m in masks) + ";")
-        jks = sorted(set(re.findall(r'\bjk_[0-9a-f]+\b', "\n".join(self.body))))
+        jks = sorted(x for x in names if x.startswith('jk_'))
         if jks: h.append("  bool " + ", ".join(f"{m} = false" for m in jks) + ";")
-        wls = sorted(set(re.findall(r'\bwl_\d+_\d+\b', "\n".join(self.body))))   # v_writelane spill slots
+        wls = sorted(x for x in names if x.startswith('wl_'))
         if wls: h.append("  uint " + ", ".join(f"{m} = 0" for m in wls) + ";")
         for e in sorted(set(self.exps)):
             # 'precise' position: depth-EQUAL passes pair a position-only prepass VS with the full G-buffer VS;
             # without it the driver may fuse/reorder their math differently -> 1 ULP depth mismatch (black trees).
-            pr = 'precise ' if e == 'pos0' and self.kind != 'ps' and not os.environ.get('NO_PRECISE_POS') else ''
+            pr = 'precise ' if e == 'pos0' and self.kind != 'ps' and not _ENV.get('NO_PRECISE_POS') else ''
             h.append(f"  {pr}float4 {e}_o = 0;")
         if self.kind == 'vs':
             for e in self.outs:
                 if e['sv'] == 0 and f"param{self._preg(e)}" not in self.exps: h.append(f"  float4 param{self._preg(e)}_o = 0;")
         if self.kind == 'ps':
             tex_in = [e for e in self.ins if e['sv'] == 0]
-            if os.environ.get('NO_REG_ATTR'):
+            if _ENV.get('NO_REG_ATTR'):
                 groups = [[e] for e in tex_in]   # old behaviour: one A{k} per signature element
             else:
                 # GCN attrN is the N-th interpolated *register* (VS param export N); several signature
@@ -1586,7 +1634,7 @@ class Tr:
                 groups = [[e for e in tex_in if e['reg'] == r] for r in regs]
                 # The Xbox compiler only gives an attribute slot to registers the PS actually reads
                 # (ISGN read mask != 0); an unread register before a read one shifts every attrN after it.
-                if not os.environ.get('NO_SKIP_UNREAD_ATTR'):
+                if not _ENV.get('NO_SKIP_UNREAD_ATTR'):
                     groups = [g for g in groups if any(e.get('rw', 0xF) for e in g)]
             for k, grp in enumerate(groups):
                 vals = []
@@ -1615,7 +1663,7 @@ class Tr:
                 if e['sv'] == 1:
                     h.append("  o.pos = pos0_o;")
                     # Old workaround (CLAMP_Z_W=1): it pushed far-plane passes (sky at z==w, depth test EQUAL) off the far plane.
-                    if os.environ.get('CLAMP_Z_W'): h.append("  o.pos.z = min(o.pos.z, o.pos.w * 0.99999);   // bridge clips z==w exactly")
+                    if _ENV.get('CLAMP_Z_W'): h.append("  o.pos.z = min(o.pos.z, o.pos.w * 0.99999);   // bridge clips z==w exactly")
                     continue
                 comps = [c for c in range(4) if (e['mask'] >> c) & 1]
                 if e['sv'] != 0:   # other system values (clip distances...): GCN exports them via pos1..3
@@ -1634,7 +1682,7 @@ class Tr:
         # frame constants; when those are off the count explodes and the 4096 cap still stalls the GPU
         # for seconds (compute queue hang entering gameplay). Cap these loops lower (EMIT_LOOP_CAP).
         if self.kind == 'cs' and 'IncrementCounter' in out and '[loop]' in out:
-            cap = os.environ.get('EMIT_LOOP_CAP', '64')
+            cap = _ENV.get('EMIT_LOOP_CAP', '64')
             out = out.replace('< 4096u; ++', f'< {cap}u; ++') + f"\n// emitter loop cap {cap}\n"
         out = harden_waterfalls(out)
         return out, self.todo
@@ -1674,8 +1722,14 @@ def sgpr_map(rs_params):
     return m
 
 def translate(path):
-    t0 = Tr(path)
-    return Tr(path, pmap=sgpr_map(t0.rs_params)).run()
+    G.cache_reads(True)
+    _ENV.snap = dict(os.environ)   # the switches cannot change during one translation
+    try:
+        t0 = Tr(path)
+        return Tr(path, pmap=sgpr_map(t0.rs_params)).run()
+    finally:
+        _ENV.snap = None
+        G.cache_reads(False)
 
 if __name__ == '__main__':
     txt, todo = translate(sys.argv[1])

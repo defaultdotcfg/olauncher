@@ -34,8 +34,28 @@ def _find_dxc():
         if found: return found[-1]
     return 'dxc.exe'
 _DXC = _find_dxc()
+_DXC_DLL = None   # dxcdll module once dxcompiler.dll (next to dxc.exe) is loaded; False = use dxc.exe
+def _dxc_dll():
+    """In-process compiler (scripts/diag/dxcdll.py): same arguments and byte-identical output as dxc.exe, without
+    starting a process and writing temp files for every shader. HLSLC_DXC_EXE=1 forces dxc.exe."""
+    global _DXC_DLL
+    if _DXC_DLL is None:
+        _DXC_DLL = False
+        dll = _os.path.join(_os.path.dirname(_DXC), 'dxcompiler.dll')
+        if not _os.environ.get('HLSLC_DXC_EXE') and _os.path.exists(dll):
+            try:
+                import dxcdll
+                dxcdll.load(dll)
+                _DXC_DLL = dxcdll
+            except Exception:
+                _DXC_DLL = False
+    return _DXC_DLL
 def _dxc(src: bytes, target: str):
     t6 = target.split('_')[0] + '_6_0'
+    m = _dxc_dll()
+    if m:
+        d, msg = m.compile(src, t6, ['-O3', '-HV', '2018'])
+        return (d, '') if d else (None, msg[-2000:])
     with tempfile.TemporaryDirectory() as td:
         fi = _os.path.join(td, 's.hlsl'); fo = _os.path.join(td, 's.cso')
         open(fi, 'wb').write(src)

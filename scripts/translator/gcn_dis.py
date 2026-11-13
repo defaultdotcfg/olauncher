@@ -5,6 +5,20 @@ ends at s_endpgm 0xBF810000). Only the encodings/opcodes seen in the game's UI s
 """
 import sys, struct, zlib, re, os
 
+_READ = None   # {path: bytes} while gcn2hlsl.translate() runs (cache_reads(True)), else every call reads the file
+def read_file(path):
+    """Bytes of a shader file. gcn2hlsl.translate() reads one dump several times (signatures, declarations, code,
+    root signature): during a translation it is read once."""
+    if _READ is None: return open(path, 'rb').read()
+    b = _READ.get(path)
+    if b is None:
+        b = _READ[path] = open(path, 'rb').read()
+    return b
+
+def cache_reads(on):
+    global _READ
+    _READ = {} if on else None
+
 SOP2 = {0:'s_add_u32',1:'s_sub_u32',2:'s_add_i32',3:'s_sub_i32',4:'s_addc_u32',5:'s_subb_u32',6:'s_min_i32',7:'s_min_u32',8:'s_max_i32',9:'s_max_u32',
         10:'s_cselect_b32',11:'s_cselect_b64',14:'s_and_b32',15:'s_and_b64',16:'s_or_b32',17:'s_or_b64',18:'s_xor_b32',19:'s_xor_b64',
         20:'s_andn2_b32',21:'s_andn2_b64',22:'s_orn2_b32',23:'s_orn2_b64',24:'s_nand_b32',25:'s_nand_b64',26:'s_nor_b32',27:'s_nor_b64',
@@ -241,7 +255,7 @@ def disasm(code):
     return out
 
 def extract_code_from_dxbc(path):
-    b = open(path, 'rb').read()
+    b = read_file(path)
     n = struct.unpack_from('<I', b, 0x1C)[0]
     shex = None
     for k in range(n):

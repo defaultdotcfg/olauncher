@@ -17,6 +17,7 @@
 - Novo visual: o logo **Rush Launcher** substitui o nome na lateral e vira o ícone da janela e do executável.
 - A aba Playlist está escondida por enquanto, até a função ser melhor integrada ao jogo.
 - **Preparação de shaders em uma etapa, sem abrir o jogo**: o launcher lê os shaders direto dos pacotes do jogo (`dat\`) em vez de abrir o jogo várias vezes para coletá-los. Tradução e compilação acontecem num único passe paralelo, com uma barra de progresso só. Todos os shaders passam a ser compilados com o DXC (o fxc levava até 1 minuto em alguns shaders de computação), então a etapa de "otimizar quando o jogo fecha" deixou de existir.
+- Tradutor mais rápido, com o mesmo resultado byte a byte: o DXC roda dentro do processo (antes abria um `dxc.exe` por shader), até 16 processos em paralelo e leitura/padrões em cache no tradutor. Os ~13 mil shaders da versão final passam de 256 s para cerca de 3 minutos (16 threads).
 
 ### Jogo
 - Porte para a versão 1.80.100.100.

@@ -1,7 +1,9 @@
 """rootsig.py file.dxbc -> dump RTS0 root signature (v1.0/1.1) parameters"""
-import sys, struct
+import sys, struct, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gcn_dis import read_file
 def get_rts0(path):
-    b = open(path,'rb').read(); n = struct.unpack_from('<I', b, 0x1C)[0]
+    b = read_file(path); n = struct.unpack_from('<I', b, 0x1C)[0]
     for i in range(n):
         off = struct.unpack_from('<I', b, 0x20+4*i)[0]
         if b[off:off+4] == b'RTS0': return b[off+8:off+8+struct.unpack_from('<I', b, off+4)[0]]

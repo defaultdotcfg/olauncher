@@ -22,7 +22,7 @@ $Out = (Resolve-Path $Out).Path
 $work = Join-Path ([IO.Path]::GetTempPath()) ("olt_" + [guid]::NewGuid().ToString("N"))
 $srcCopy = Join-Path $work "src"
 New-Item -ItemType Directory -Force $srcCopy | Out-Null
-foreach ($f in "translate_all.py", "build_shader_cache.py", "tess_bypass.py", "compile_cso.py",
+foreach ($f in "translate_all.py", "build_shader_cache.py", "tess_bypass.py", "compile_cso.py", "dxcdll.py",
                "gcn2hlsl.py", "gcn_dis.py", "hlslc.py", "rootsig.py", "shader_patches.json") {
     Copy-Item (Join-Path $Src $f) $srcCopy
 }
@@ -34,7 +34,7 @@ try {
         --distpath (Join-Path $work "dist") --workpath (Join-Path $work "build") --specpath $work `
         --paths $srcCopy `
         --hidden-import build_shader_cache --hidden-import tess_bypass --hidden-import compile_cso `
-        --hidden-import gcn2hlsl --hidden-import gcn_dis --hidden-import hlslc --hidden-import rootsig `
+        --hidden-import gcn2hlsl --hidden-import gcn_dis --hidden-import hlslc --hidden-import rootsig --hidden-import dxcdll `
         --add-data "$(Join-Path $srcCopy 'shader_patches.json');." `
         --exclude-module tkinter --exclude-module unittest --exclude-module pydoc `
         (Join-Path $srcCopy "translate_all.py")
