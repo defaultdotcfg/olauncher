@@ -130,27 +130,39 @@ def build(game, vs_h, ds_path):
     text = '\n'.join(src) + '\n'
     return text, sm6
 
-def run(game, skip_existing=False, log=print, cancelled=lambda: False, changed_only=False):
-    """changed_only: retranslate everything but recompile only when the generated HLSL differs (translator revision bump)."""
-    tdir = os.path.join(game, 'shaders', 'translated')
-    os.makedirs(tdir, exist_ok=True)
-    ok = fail = 0
+def pairs(game):
+    """[(vs_hash, ds_hash, ds_path)] of every dumped pair."""
+    out = []
     for ds_path in sorted(glob.glob(os.path.join(game, 'shaders', 'tess', 'vs*_ds*.dxbc'))):
         m = re.search(r'vs([0-9a-f]{16})_ds([0-9a-f]{16})\.dxbc$', ds_path)
-        vs_h, ds_h = m.groups()
-        base = os.path.join(tdir, 'tess_%s_%s' % (vs_h, ds_h))
-        if skip_existing and os.path.exists(base + '.dxil.cso'): continue
+        if m: out.append((m.group(1), m.group(2), ds_path))
+    return out
+
+
+def build_pair(game, vs_h, ds_h, ds_path, changed_only=False):
+    """Builds shaders/translated/tess_<vs>_<ds>.hlsl + .dxil.cso. Returns 'ok', 'unchanged' or raises."""
+    base = os.path.join(game, 'shaders', 'translated', 'tess_%s_%s' % (vs_h, ds_h))
+    text, sm6 = build(game, vs_h, ds_path)
+    if changed_only and os.path.exists(base + '.dxil.cso') and os.path.exists(base + '.hlsl'):
+        if open(base + '.hlsl', encoding='utf-8').read() == text: return 'unchanged'
+    open(base + '.hlsl', 'w', encoding='utf-8').write(text)
+    d, msg = hlslc._dxc(SM6 + text.encode(), 'vs_6_0')
+    if not d: raise RuntimeError('dxc compile failed: ' + msg[-300:])
+    tmp = base + '.dxil.cso.%d.tmp' % os.getpid()
+    with open(tmp, 'wb') as fh: fh.write(d)
+    os.replace(tmp, base + '.dxil.cso')
+    return 'ok'
+
+
+def run(game, skip_existing=False, log=print, cancelled=lambda: False, changed_only=False):
+    """changed_only: retranslate everything but recompile only when the generated HLSL differs (translator revision bump)."""
+    os.makedirs(os.path.join(game, 'shaders', 'translated'), exist_ok=True)
+    ok = fail = 0
+    for vs_h, ds_h, ds_path in pairs(game):
+        if skip_existing and os.path.exists(os.path.join(game, 'shaders', 'translated', 'tess_%s_%s.dxil.cso' % (vs_h, ds_h))): continue
         if cancelled(): break
         try:
-            text, sm6 = build(game, vs_h, ds_path)
-            if changed_only and os.path.exists(base + '.dxil.cso') and os.path.exists(base + '.hlsl'):
-                if open(base + '.hlsl', encoding='utf-8').read() == text: continue
-            open(base + '.hlsl', 'w', encoding='utf-8').write(text)
-            d = hlslc.compile_to_bytes(b'// sm6\n' + text.encode(), 'vs_6_0')
-            if not d: raise RuntimeError('dxc compile failed: ' + hlslc._dxc(SM6 + text.encode(), 'vs_6_0')[1][-300:])
-            with open(base + '.dxil.cso.tmp', 'wb') as fh: fh.write(d)
-            os.replace(base + '.dxil.cso.tmp', base + '.dxil.cso')
-            log('ok   %s %s %d' % (vs_h, ds_h, len(d))); ok += 1
+            if build_pair(game, vs_h, ds_h, ds_path, changed_only) == 'ok': log('ok   %s %s' % (vs_h, ds_h)); ok += 1
         except Exception as e:
             log('FAIL %s %s %s' % (vs_h, ds_h, str(e)[:300])); fail += 1
     log('done ok=%d fail=%d' % (ok, fail))

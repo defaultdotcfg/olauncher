@@ -23,6 +23,20 @@ def fnv64(b):
     for c in b: h = ((h ^ c) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
     return h
 
+def translate_one(f, hx, kind, patches):
+    """One dump -> (text of <hx>.hlsl, '') or (None, reason). Used by translate_all's worker processes."""
+    T.SIF_FORCE = hx in set(patches.get('_scalar_if', [])); T.SIF_ANY64 = hx in set(patches.get('_sif_any64', []))
+    if hx in set(patches.get('_stub_image', [])): os.environ['STUB_IMAGE'] = '1'
+    try:
+        txt, todo = T.translate(f)
+    except Exception as e:
+        return None, f"{kind}: {type(e).__name__}: {str(e)[:80]}"
+    finally:
+        os.environ.pop('STUB_IMAGE', None)
+    if todo:
+        return None, f"{kind}: {todo[0][1].split('!!')[-1].strip()[:80]}"
+    return f"// {os.path.basename(f)} fnv={hx} kind={kind}\n" + apply_patches(hx, txt, patches), ''
+
 def build(d, skip_existing=False, skip=(), progress=None, cancelled=lambda: False, pattern='pso_*_*.dxbc', changed_only=False):
     """Translates the dumps in d. skip_existing: leave hashes that already have a .hlsl; skip: hashes not to try.
     progress(done, total) is called per dump. Returns (Counter of results, set of failed hashes, Counter of reasons)."""

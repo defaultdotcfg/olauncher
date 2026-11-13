@@ -1,11 +1,14 @@
 // ============================================================================
-// "Preparando shaders" step that runs when JOGAR is pressed, before the game starts.
-//  1. Compiles any translated shader (<game>\shaders\translated\*.hlsl) whose .cso is missing or older.
-//  2. Rebuilds the pipeline disk cache (<game>\shaders\pso_cache, see src/common/pso_cache_format.h)
+// "Preparando shaders": one step, run when JOGAR is pressed, before the game starts. The game is never opened for it.
+//  1. Reads every shader the game ships straight from its packs (<game>\dat, shader_extract.inc) the first time,
+//     or after the packs changed (patch applied): shaders\pso_h*.dxbc + shaders\tess pairs.
+//  2. Translates and compiles (dxc) the ones without a translation, plus any translation whose .cso is missing
+//     or stale, in one parallel pass (translator\olauncher-translator.exe, hidden).
+//  3. Rebuilds the pipeline disk cache (<game>\shaders\pso_cache, see src/common/pso_cache_format.h)
 //     for every pipeline the game recorded in manifest.bin that the current library.bin does not have
 //     (first run after a driver update, or pipelines the game created but never got to save).
-// A popup with a progress bar appears if the work takes longer than a moment; "Pular" starts the game
-// right away (whatever was already built is kept).
+// A popup with one progress bar appears if the work takes longer than a moment; "Pular" starts the game
+// right away (whatever was already done is kept and the rest continues on the next JOGAR).
 // ============================================================================
 #include <d3d12.h>
 #include <atomic>
@@ -14,6 +17,7 @@
 #include <unordered_map>
 #include "../common/pso_cache_format.h"
 #include "version.h"
+#include "shader_extract.inc"
 
 #define WM_SHADER_PREP_DONE (WM_USER + 120)
 #define ID_PREP_SKIP        1030
@@ -21,14 +25,26 @@
 struct ShaderPrepState
 {
     wchar_t gameDir[MAX_PATH] = {};
-    std::atomic<int> stage{ 0 };   // 0 = checking, 1 = compiling .cso, 2 = building pipelines, 3/4 = translating, 5 = warm-up run
+    std::atomic<int> stage{ 0 };   // 0 = checking, 1 = reading the packs, 2 = translating + compiling, 3 = pipelines
     std::atomic<int> done{ 0 }, total{ 0 };
     std::atomic<bool> cancel{ false }, finished{ false };
-    int compiled = 0, compileFailed = 0, psoBuilt = 0, psoFailed = 0, psoCached = 0, translated = 0, translateFailed = 0;
-    bool optimize = false;         // after the game closed: also optimize the compute shaders compiled fast
-    bool warmup = false;           // popup shown while the game runs once to record its shaders (no worker thread)
-    int warmRound = 0;
+    int psoBuilt = 0, psoFailed = 0, psoCached = 0, translated = 0, translateFailed = 0;
+    bool extract = false, translate = false;   // decided before the thread starts: sets the share of the bar each part gets
+    ShaderExtractState ex;
 };
+
+// Overall progress 0..1000 for the single bar: reading the packs 40% (disk bound, 22-34 GB), translating 55%,
+// the rest 5% (each part's share goes to the others when it has nothing to do).
+static int PrepProgress(ShaderPrepState *st)
+{
+    const int stage = st->stage, done = st->done, total = st->total;
+    const double wEx = st->extract ? 40 : 0, wTr = st->translate ? 55 : 0, wRest = 100 - wEx - wTr;
+    double f = 0;
+    if (stage == 1) { long long t = st->ex.bytesTotal; f = wEx * (t > 0 ? (double)st->ex.bytesDone / (double)t : 0); }
+    else if (stage == 2) f = wEx + wTr * (total > 0 ? (double)min(done, total) / total : 0);
+    else if (stage == 3) f = wEx + wTr + wRest * (total > 0 ? (double)min(done, total) / total : 0);
+    return (int)(f * 10);
+}
 
 static ShaderPrepState *g_prep = nullptr;
 static HWND g_hPrepWnd = nullptr;
@@ -59,7 +75,7 @@ static bool WriteWholeFile(const wchar_t *path, const void *data, size_t n)
     return ok && MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING);
 }
 
-// ---- step 0: console shaders (shaders\pso_h*.dxbc,shaders\tess\*.dxbc) -> shaders\translated ----
+// ---- translator ----
 // Runs translator\olauncher-translator.exe (scripts/translator packaged with PyInstaller + DXC) hidden.
 // It only translates dumps it has not seen yet; shaders\translated\failed.txt ("#version X" + failed hashes)
 // is rewritten at the end of every complete run, so it doubles as the "last run" marker.
@@ -99,29 +115,72 @@ static int PrepCountDumps(const wchar_t *gameDir)
     return n + PrepCountFiles(p);
 }
 
-// Nothing translated yet (new install): JOGAR first runs the game briefly so it records its shaders.
-static bool PrepIsFreshInstall(const wchar_t *gameDir)
+// ---- packs -> shaders\pso_h*.dxbc + shaders\tess (shader_extract.inc) ----
+// shaders\packs.txt records which packs were read ("extract <rev>" + count, size and newest write time of dat\*.dat):
+// they are read again only when that changes (game patched or copied again) or the extractor changed.
+static const int kPrepExtractRev = 1;
+
+static bool PrepPacksSignature(const wchar_t *gameDir, char *out, size_t cap)
 {
-    wchar_t p[MAX_PATH];
-    swprintf_s(p, MAX_PATH, L"%ls\\shaders\\translated\\*.cso", gameDir);
-    return PrepCountFiles(p) == 0;
+    wchar_t pattern[MAX_PATH];
+    swprintf_s(pattern, MAX_PATH, L"%ls\\dat\\*.dat", gameDir);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    long long count = 0, bytes = 0;
+    ULONGLONG newest = 0;
+    do
+    {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        count++;
+        bytes += ((long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        newest = max(newest, ((ULONGLONG)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    if (!count) return false;
+    sprintf_s(out, cap, "extract %d\n%lld %lld %llu\n", kPrepExtractRev, count, bytes, newest);
+    return true;
 }
 
-// compute shaders compiled without fxc optimizations (marked <hash>.unopt) still waiting for --optimize
-static bool PrepHasUnoptimized(const wchar_t *gameDir)
+static bool PrepExtractionNeeded(const wchar_t *gameDir)
 {
-    wchar_t p[MAX_PATH];
-    swprintf_s(p, MAX_PATH, L"%ls\\shaders\\translated\\*.unopt", gameDir);
-    return PrepCountFiles(p) > 0;
+    char want[128];
+    if (!PrepPacksSignature(gameDir, want, sizeof(want))) return false;  // no packs here: only the bridge's own dumps
+    wchar_t marker[MAX_PATH];
+    swprintf_s(marker, MAX_PATH, L"%ls\\shaders\\packs.txt", gameDir);
+    std::vector<uint8_t> have;
+    return !ReadWholeFile(marker, have) || std::string(have.begin(), have.end()) != want;
 }
 
+static void PrepExtractShaders(ShaderPrepState *st)
+{
+    st->stage = 1;
+    ULONGLONG t0 = GetTickCount64();
+    int n = ExtractGameShaders(st->gameDir, &st->cancel, st->ex);
+    if (st->cancel)
+    {
+        LogPrintf(L"[Shaders] leitura dos pacotes interrompida (pulado); continua na próxima vez\r\n");
+        return;
+    }
+    LogPrintf(L"[Shaders] pacotes do jogo lidos em %.1f s: %d shader(s), %d novo(s), %d par(es) de tesselação%ls\r\n",
+              (GetTickCount64() - t0) / 1000.0, st->ex.found.load(), n, st->ex.tessPairs.load(),
+              st->ex.badFiles ? L" (algum pacote não pôde ser lido)" : L"");
+    char sig[128];
+    wchar_t marker[MAX_PATH];
+    swprintf_s(marker, MAX_PATH, L"%ls\\shaders\\packs.txt", st->gameDir);
+    if (!st->ex.badFiles && PrepPacksSignature(st->gameDir, sig, sizeof(sig))) WriteWholeFile(marker, sig, strlen(sig));
+}
+
+// ---- console shaders (shaders\pso_h*.dxbc, shaders\tess\*.dxbc) -> shaders\translated\*.cso ----
 static bool PrepTranslationNeeded(const wchar_t *gameDir)
 {
-    wchar_t shaders[MAX_PATH], tess[MAX_PATH], failed[MAX_PATH];
+    wchar_t shaders[MAX_PATH], tess[MAX_PATH], failed[MAX_PATH], unopt[MAX_PATH];
     swprintf_s(shaders, MAX_PATH, L"%ls\\shaders", gameDir);
     swprintf_s(tess, MAX_PATH, L"%ls\\shaders\\tess", gameDir);
     swprintf_s(failed, MAX_PATH, L"%ls\\shaders\\translated\\failed.txt", gameDir);
+    swprintf_s(unopt, MAX_PATH, L"%ls\\shaders\\translated\\*.unopt", gameDir);
     if (PrepCountDumps(gameDir) == 0) return false;
+    if (PrepCountFiles(unopt) > 0) return true;   // compute shaders an older version left unoptimized: rebuilt now
     std::vector<uint8_t> f;
     if (!ReadWholeFile(failed, f)) return true;  // never ran here
     std::string head(f.begin(), f.begin() + min(f.size(), (size_t)64));
@@ -135,18 +194,18 @@ static bool PrepTranslationNeeded(const wchar_t *gameDir)
 static void PrepTranslateShaders(ShaderPrepState *st)
 {
     wchar_t exe[MAX_PATH];
-    if (!PrepTranslationNeeded(st->gameDir) && !(st->optimize && PrepHasUnoptimized(st->gameDir))) return;
+    if (!PrepTranslationNeeded(st->gameDir)) return;
     if (!PrepTranslatorExe(exe))
     {
         LogPrintf(L"[Shaders] tradutor não encontrado (%ls): os shaders novos ficam sem tradução\r\n", exe);
         return;
     }
-    st->stage = 3; st->done = 0; st->total = 0;
+    st->stage = 2; st->done = 0; st->total = 0;
     wchar_t dir[MAX_PATH], cmd[3 * MAX_PATH], flag[MAX_PATH];
     wcscpy_s(dir, MAX_PATH, st->gameDir);
     size_t dl = wcslen(dir);
     while (dl > 3 && (dir[dl - 1] == L'\\' || dir[dl - 1] == L'/')) dir[--dl] = 0;  // no "\"" escape at the end
-    swprintf_s(cmd, 3 * MAX_PATH, L"\"%ls\" \"%ls\" --version %ls%ls", exe, dir, OLAUNCHER_VERSION, st->optimize ? L" --optimize" : L"");
+    swprintf_s(cmd, 3 * MAX_PATH, L"\"%ls\" \"%ls\" --version %ls", exe, dir, OLAUNCHER_VERSION);
     swprintf_s(flag, MAX_PATH, L"%ls\\shaders\\translated\\cancel.flag", dir);
 
     SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
@@ -188,7 +247,7 @@ static void PrepTranslateShaders(ShaderPrepState *st)
             int s, d, t;
             if (sscanf_s(l.c_str(), "PROGRESS %d %d %d", &s, &d, &t) == 3)
             {
-                r.st->stage = s == 1 ? 3 : s == 2 ? 4 : s == 4 ? 6 : 1;
+                r.st->stage = 2;   // one stage: "PROGRESS 1 <done> <total>"
                 r.st->total = t; r.st->done = d;
             }
             else if (sscanf_s(l.c_str(), "DONE %d %d", &d, &t) == 2) { r.newOk = d; r.newFail = t; }
@@ -243,79 +302,7 @@ static void PrepTranslateShaders(ShaderPrepState *st)
     else LogPrintf(L"[Shaders] o tradutor terminou com erro (código %lu)\r\n", code);
 }
 
-// ---- step 1: translated HLSL -> .cso ----
-typedef HRESULT(WINAPI *PFN_PrepD3DCompile)(LPCVOID, SIZE_T, LPCSTR, const void *, void *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
-
-static void PrepCompileShaders(ShaderPrepState *st)
-{
-    wchar_t dir[MAX_PATH], pattern[MAX_PATH];
-    swprintf_s(dir, MAX_PATH, L"%ls\\shaders\\translated", st->gameDir);
-    swprintf_s(pattern, MAX_PATH, L"%ls\\*.hlsl", dir);
-    std::vector<std::wstring> todo;
-    WIN32_FIND_DATAW fd;
-    HANDLE hf = FindFirstFileW(pattern, &fd);
-    if (hf == INVALID_HANDLE_VALUE) return;
-    do
-    {
-        if (_wcsnicmp(fd.cFileName, L"tess_", 5) == 0) continue;  // built by tess_bypass.py (.dxil.cso), not here
-        std::wstring hl = std::wstring(dir) + L"\\" + fd.cFileName;
-        std::wstring cso = hl.substr(0, hl.size() - 5) + L".cso";
-        WIN32_FILE_ATTRIBUTE_DATA ca;
-        if (!GetFileAttributesExW(cso.c_str(), GetFileExInfoStandard, &ca) || CompareFileTime(&ca.ftLastWriteTime, &fd.ftLastWriteTime) < 0)
-            todo.push_back(hl);
-    } while (FindNextFileW(hf, &fd));
-    FindClose(hf);
-    if (todo.empty()) return;
-
-    wchar_t dll[MAX_PATH];
-    swprintf_s(dll, MAX_PATH, L"%ls\\D3DCompiler_47.dll", st->gameDir);
-    HMODULE hc = LoadLibraryExW(dll, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!hc) hc = LoadLibraryW(L"D3DCompiler_47.dll");
-    PFN_PrepD3DCompile compile = hc ? (PFN_PrepD3DCompile)GetProcAddress(hc, "D3DCompile") : nullptr;
-    if (!compile) { LogPrintf(L"[Shaders] D3DCompiler_47.dll não encontrado; %zu shader(s) ficam sem .cso\r\n", todo.size()); return; }
-
-    st->stage = 1; st->done = 0; st->total = (int)todo.size();
-    std::atomic<size_t> next{ 0 };
-    std::mutex logLock;
-    auto work = [&]() {
-        for (size_t i; !st->cancel && (i = next++) < todo.size();)
-        {
-            std::vector<uint8_t> src;
-            const std::wstring &hl = todo[i];
-            bool ok = false;
-            if (ReadWholeFile(hl.c_str(), src))
-            {
-                std::string head((const char *)src.data(), min(src.size(), (size_t)300));
-                size_t k = head.find("kind=");
-                std::string kind = k != std::string::npos ? head.substr(k + 5, 2) : "";
-                if (kind == "vs" || kind == "ps" || kind == "cs")
-                {
-                    std::string target = kind + "_5_1";
-                    ID3DBlob *blob = nullptr, *err = nullptr;
-                    if (SUCCEEDED(compile(src.data(), src.size(), "translated.hlsl", nullptr, nullptr, "main", target.c_str(), 0, 0, &blob, &err)) && blob)
-                    {
-                        std::wstring cso = hl.substr(0, hl.size() - 5) + L".cso";
-                        ok = WriteWholeFile(cso.c_str(), blob->GetBufferPointer(), blob->GetBufferSize());
-                    }
-                    if (blob) blob->Release();
-                    if (err) err->Release();
-                }
-            }
-            {
-                std::lock_guard<std::mutex> g(logLock);
-                if (ok) st->compiled++;
-                else { st->compileFailed++; LogPrintf(L"[Shaders] falha ao compilar %ls\r\n", PathFindFileNameW(hl.c_str())); }
-            }
-            st->done++;
-        }
-    };
-    unsigned n = max(1u, min(8u, std::thread::hardware_concurrency()));
-    std::vector<std::thread> th;
-    for (unsigned t = 0; t < n; ++t) th.emplace_back(work);
-    for (auto &t : th) t.join();
-}
-
-// ---- step 2: pipeline library ----
+// ---- pipeline library ----
 typedef HRESULT(WINAPI *PFN_PrepCreateDevice)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
 
 struct PrepRecord { uint64_t key; std::vector<uint8_t> payload; };
@@ -375,7 +362,7 @@ static void PrepBuildPipelines(ShaderPrepState *st)
         }
     }
 
-    st->stage = 2; st->done = 0; st->total = (int)recs.size();
+    st->stage = 3; st->done = 0; st->total = (int)recs.size();
     std::mutex lock;  // guards lib, the caches and the counters
     std::unordered_map<uint64_t, ID3D12RootSignature *> rootSigs;
     std::unordered_map<uint64_t, std::vector<uint8_t>> shaders;  // by content hash
@@ -481,13 +468,13 @@ static DWORD WINAPI ShaderPrepThread(LPVOID p)
 {
     ShaderPrepState *st = (ShaderPrepState *)p;
     ULONGLONG t0 = GetTickCount64();
-    PrepTranslateShaders(st);
-    if (!st->cancel) PrepCompileShaders(st);
+    if (st->extract) PrepExtractShaders(st);
+    if (!st->cancel) PrepTranslateShaders(st);
     if (!st->cancel) PrepBuildPipelines(st);
     ULONGLONG ms = GetTickCount64() - t0;
-    if (st->compiled || st->compileFailed || st->psoBuilt || st->psoFailed)
-        LogPrintf(L"[Shaders] preparo em %.1f s: %d shader(s) compilado(s), %d falha(s); %d pipeline(s) montado(s), %d já no cache, %d ignorado(s)%ls\r\n",
-                  ms / 1000.0, st->compiled, st->compileFailed, st->psoBuilt, st->psoCached, st->psoFailed, st->cancel ? L" (pulado)" : L"");
+    if (st->extract || st->translate || st->psoBuilt || st->psoFailed)
+        LogPrintf(L"[Shaders] preparo em %.1f s: %d shader(s) traduzido(s), %d sem tradução; %d pipeline(s) montado(s), %d já no cache, %d ignorado(s)%ls\r\n",
+                  ms / 1000.0, st->translated, st->translateFailed, st->psoBuilt, st->psoCached, st->psoFailed, st->cancel ? L" (pulado)" : L"");
     else if (st->psoCached)
         LogPrintf(L"[Shaders] cache de pipelines em dia (%d pipelines)\r\n", st->psoCached);
     st->finished = true;
@@ -502,34 +489,28 @@ static void PaintPrepWindow(HWND hwnd, HDC hdc)
     HBRUSH eb = CreateSolidBrush(COLOR_BORDER); FrameRect(hdc, &rc, eb); DeleteObject(eb);
     SetBkMode(hdc, TRANSPARENT);
     ShaderPrepState *st = g_prep;
-    int stage = st ? st->stage.load() : 0, done = st ? st->done.load() : 0, total = st ? st->total.load() : 0;
+    const int p = st ? min(1000, PrepProgress(st)) : 0;
+    const bool firstTime = st && (st->extract || st->translate);
 
     SelectObject(hdc, g_hFontSmallCaps); SetTextColor(hdc, COLOR_ACCENT_ORANGE);
     TextOutW(hdc, 24, 20, L"PREPARANDO SHADERS", 18);
     SelectObject(hdc, g_hFontUIBold); SetTextColor(hdc, COLOR_TEXT_PRIMARY);
-    const wchar_t *what = stage == 1 ? L"Compilando shaders traduzidos" : stage == 2 ? L"Otimizando pipelines para a sua GPU" :
-                          stage == 3 ? L"Traduzindo shaders do console" : stage == 4 ? L"Traduzindo shaders de tesselação" :
-                          stage == 5 ? L"Primeira execução: coletando shaders do jogo" :
-                          stage == 6 ? L"Otimizando shaders de computação" : L"Verificando o cache de shaders";
+    const wchar_t *what = firstTime ? L"Preparando os shaders do jogo para o seu PC" : L"Preparando os pipelines para a sua GPU";
     TextOutW(hdc, 24, 42, what, (int)wcslen(what));
 
     RECT bar = { 24, 76, rc.right - 24, 86 };
     FillRound(hdc, bar, 10, RGB(48, 54, 64), RGB(48, 54, 64));
-    if (total > 0 && done > 0)
+    if (p > 0)
     {
         RECT f = bar;
-        f.right = bar.left + max(10L, (LONG)((bar.right - bar.left) * (long long)min(done, total) / total));
+        f.right = bar.left + max(10L, (LONG)((bar.right - bar.left) * (long long)p / 1000));
         FillRound(hdc, f, 10, COLOR_ACCENT_ORANGE, COLOR_ACCENT_ORANGE);
     }
-    wchar_t t[128];
-    if (stage == 5) swprintf_s(t, L"Rodada %d  ·  %d shaders encontrados", st->warmRound, done);
-    else if (total > 0) swprintf_s(t, L"%d de %d  ·  %d%%", min(done, total), total, (int)(100LL * min(done, total) / total));
-    else wcscpy_s(t, L"Aguarde…");
+    wchar_t t[64];
+    swprintf_s(t, L"%d%%", p / 10);
     SelectObject(hdc, g_hFontUI); SetTextColor(hdc, COLOR_TEXT_MUTED);
     TextOutW(hdc, 24, 96, t, (int)wcslen(t));
-    const wchar_t *hint = stage == 6 ? L"Pode pular: continua quando o jogo fechar de novo." : stage == 5 ? L"O jogo abre e fecha sozinho algumas vezes. Não precisa mexer." :
-                          stage == 3 || stage == 4 ? L"Na primeira vez pode levar alguns minutos." :
-                          L"Isso só demora na primeira vez ou após atualizar o driver.";
+    const wchar_t *hint = firstTime ? L"Na primeira vez leva alguns minutos." : L"Isso só demora após atualizar o driver.";
     TextOutW(hdc, 24, 118, hint, (int)wcslen(hint));
 }
 
@@ -587,7 +568,7 @@ static LRESULT CALLBACK PrepWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 }
 
 // Starts the preparation; the main window gets WM_SHADER_PREP_DONE when the game can be launched.
-static void StartShaderPrep(HWND owner, const wchar_t *gameDir, int warmRound = 0, bool optimize = false)
+static void StartShaderPrep(HWND owner, const wchar_t *gameDir)
 {
     static bool s_registered = false;
     if (!s_registered)
@@ -603,21 +584,18 @@ static void StartShaderPrep(HWND owner, const wchar_t *gameDir, int warmRound = 
     delete g_prep;
     g_prep = new ShaderPrepState();
     wcscpy_s(g_prep->gameDir, MAX_PATH, gameDir);
-    g_prep->warmup = warmRound > 0;
-    g_prep->optimize = optimize;
-    g_prep->warmRound = warmRound;
-    if (g_prep->warmup) g_prep->stage = 5;
+    g_prep->extract = PrepExtractionNeeded(gameDir);
+    g_prep->translate = g_prep->extract || PrepTranslationNeeded(gameDir);
     g_prepStartTick = GetTickCount64();
 
     const int W = 440, H = 196;
     RECT orc; GetWindowRect(owner, &orc);
     int x = orc.left + (orc.right - orc.left - W) / 2, y = orc.top + (orc.bottom - orc.top - H) / 2;
-    g_hPrepWnd = CreateWindowExW(WS_EX_TOOLWINDOW | (warmRound ? WS_EX_TOPMOST : 0), L"OnRushShaderPrep", L"Preparando shaders", WS_POPUP | WS_CLIPCHILDREN,
+    g_hPrepWnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"OnRushShaderPrep", L"Preparando shaders", WS_POPUP | WS_CLIPCHILDREN,
                                  x, y, W, H, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
     HWND skip = CreateWindowW(L"BUTTON", L"Pular", WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
                               W - 24 - 100, H - 24 - 32, 100, 32, g_hPrepWnd, (HMENU)ID_PREP_SKIP, nullptr, nullptr);
     SendMessageW(skip, WM_SETFONT, (WPARAM)g_hFontUI, TRUE);
     SetTimer(g_hPrepWnd, 1, 100, nullptr);
-    if (warmRound) ShowWindow(g_hPrepWnd, SW_SHOWNA);  // the launcher closes it when the warm-up run ends
-    else CloseHandle(CreateThread(nullptr, 0, ShaderPrepThread, g_prep, 0, nullptr));
+    CloseHandle(CreateThread(nullptr, 0, ShaderPrepThread, g_prep, 0, nullptr));
 }

@@ -1,14 +1,13 @@
-"""translate_all.py <game_dir> [--version V] [--optimize]
-Incremental shader pipeline used by the launcher (also packaged as olauncher-translator.exe):
-  1. build_shader_cache : new dumps (shaders/pso_*.dxbc) -> shaders/translated/<hash>.hlsl
-  2. tess_bypass        : new tessellation dumps (shaders/tess) -> tess_*.dxil.cso
-  3. compile_cso        : .hlsl -> .cso / .dxil.cso (up-to-date files are skipped); compute shaders are
-                         compiled without fxc optimizations (fxc takes up to a minute on some of them)
-  4. --optimize         : recompiles those compute shaders with optimizations (the launcher asks for it
-                         after the game closes, so it never delays starting the game)
+"""translate_all.py <game_dir> [--version V]
+Shader pipeline used by the launcher (also packaged as olauncher-translator.exe). One pass, in parallel worker processes:
+  - every console shader in shaders/pso_h<hash>_<vs|ps|cs>.dxbc (extracted from the game's packs by the launcher, or
+    dumped by the bridge) without a translation -> shaders/translated/<hash>.hlsl -> <hash>.cso (dxc, DXIL);
+  - .hlsl without an up-to-date .cso (or with an old <hash>.unopt marker) -> recompiled;
+  - every tessellation pair shaders/tess/vs<V>_ds<D>.dxbc -> tess_<V>_<D>.dxil.cso (tess_bypass.py).
 Shaders that fail are listed in shaders/translated/failed.txt and not retried until the version changes.
 Writes shaders/translated/skip.txt (compute kernels the bridge must leave untranslated) when missing.
-Progress for the launcher on stdout: "PROGRESS <stage 1-4> <done> <total>", last line "DONE <new> <failed>".
+Progress for the launcher on stdout: "PROGRESS 1 <done> <total>", last line "DONE <new> <failed>".
+--optimize is still accepted (older launchers pass it); there is no separate optimization step any more.
 Internal: translate_all --gcn2hlsl <src.dxbc> <out.hlsl> (used by tess_bypass inside the packaged exe)."""
 import sys, os, json, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -64,7 +63,7 @@ def main(argv):
     if not os.path.isdir(shaders):
         say('DONE 0 0'); return 0
     os.makedirs(tr, exist_ok=True)
-    os.environ['NOCHECK'] = '1'  # compile_cso validates (and removes) what does not compile
+    os.environ['NOCHECK'] = '1'  # build_shader_cache: the workers compile (with dxc) right after translating
     t0 = time.time()
 
     import build_shader_cache as B, tess_bypass, compile_cso
@@ -90,36 +89,96 @@ def main(argv):
     redo = sorted({k for r, ks in RETRANSLATE.items() if old_rev < r <= TRANSLATOR_REV for k in ks})
     if old_rev < 8 and os.path.exists(skip_path): open(skip_path, 'w').write('')   # emitters on (rev 8)
     if redo: failed = set()   # a translator fix may make them work: try them again
-    if redo and not cancelled():
-        for k in [k for k in redo if k != 'tess']:
-            rs, rf, _ = B.build(shaders, skip_existing=False, skip=failed, progress=lambda d, t: say('PROGRESS 1 %d %d' % (d, t)), cancelled=cancelled,
-                                pattern='pso_h*_%s.dxbc' % k, changed_only=True)
-            say('retranslate %s (rev %d -> %d): %s' % (k, old_rev, TRANSLATOR_REV, dict(rs)))
-        if 'tess' in redo:
-            tok, tfail = tess_bypass.run(game, skip_existing=False, log=lambda m: None, cancelled=cancelled, changed_only=True)
-            say('retranslate tess: ok=%d fail=%d' % (tok, tfail))
-    stat, new_failed, reasons = B.build(shaders, skip_existing=True, skip=failed, progress=lambda d, t: say('PROGRESS 1 %d %d' % (d, t)), cancelled=cancelled,
-                                     pattern='pso_h*_*.dxbc')  # current bridge naming (older dev dumps are ignored)
-    new_ok = sum(n for k, n in stat.items() if k.endswith(' ok'))
-    say('translate: %s' % dict(stat))
+
+    # ---- one work list: translate + compile each console shader, recompile stale .cso, build tessellation pairs ----
+    import re, collections
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    existing = {f[:-5] for f in os.listdir(tr) if f.endswith('.hlsl') and not f.startswith('tess_')}
+    jobs, queued = [], set()   # (weight, (function, args...))
+    for name in os.listdir(shaders):
+        m = re.match(r'pso_h([0-9a-f]{16})_(vs|ps|cs)\.dxbc$', name)
+        if not m or m.group(1) in queued: continue
+        hx, kind = m.groups()
+        f = os.path.join(shaders, name)
+        if hx in existing:
+            if kind in redo: jobs.append((os.path.getsize(f), (_job_shader, f, hx, kind, 'redo'))); queued.add(hx)
+        elif hx not in failed:
+            jobs.append((os.path.getsize(f), (_job_shader, f, hx, kind, 'new'))); queued.add(hx)
+    for hx in existing - queued:   # translated before but without an up-to-date .cso (or an fxc-unoptimized one)
+        f = os.path.join(tr, hx + '.hlsl')
+        if compile_cso.needs_work(f): jobs.append((os.path.getsize(f), (_job_shader, f, hx, compile_cso._kind(f), 'compile')))
+    for vs_h, ds_h, ds_path in tess_bypass.pairs(game):
+        key = 'tess_%s_%s' % (vs_h, ds_h)
+        have = os.path.exists(os.path.join(tr, key + '.dxil.cso'))
+        if (have and 'tess' not in redo) or (not have and key in failed): continue
+        jobs.append((1 << 20, (_job_tess, game, vs_h, ds_h, ds_path, have)))
+    jobs.sort(key=lambda j: -j[0])   # big ones first, so the long compiles overlap with the short ones
+
+    stat, reasons, new_failed, new_ok = collections.Counter(), collections.Counter(), set(), 0
+    say('PROGRESS 1 0 %d' % len(jobs))
+    if jobs and not cancelled():
+        with ProcessPoolExecutor(compile_cso.workers(len(jobs))) as pool:
+            futs = [pool.submit(*args) for _, args in jobs]
+            for i, fut in enumerate(as_completed(futs)):
+                key, res, why = fut.result()
+                stat[res] += 1
+                if res == 'ok': new_ok += 1
+                elif res == 'fail': new_failed.add(key); reasons[why] += 1
+                say('PROGRESS 1 %d %d' % (i + 1, len(jobs)))
+                if cancelled():
+                    for f2 in futs: f2.cancel()
+    say('shaders: %s' % dict(stat))
     for r, n in reasons.most_common(5): say('  %d %s' % (n, r))
-    say('PROGRESS 2 0 1')
-    tok, tfail = tess_bypass.run(game, skip_existing=True, log=lambda m: None, cancelled=cancelled)
-    say('tessellation: ok=%d fail=%d' % (tok, tfail))
-    c, removed = compile_cso.run(tr, progress=lambda d, t: say('PROGRESS 3 %d %d' % (d, t)), log=lambda m: None, cancelled=cancelled, fast=True)
-    say('compile: %s' % dict(c))
     if cancelled():  # leave failed.txt alone: the next run picks up where this one stopped
         os.remove(flag); say('CANCELLED'); return 1
-    failed |= new_failed | set(removed)
+    failed |= new_failed
     open(failed_path, 'w').write('#version %s\n' % version + '\n'.join(sorted(failed)) + '\n')
-    if '--optimize' in argv:
-        c2, _ = compile_cso.run(tr, progress=lambda d, t: say('PROGRESS 4 %d %d' % (d, t)), log=lambda m: None, cancelled=cancelled, optimize=True)
-        say('optimize: %s' % dict(c2))
-        if cancelled(): os.remove(flag); say('CANCELLED'); return 1
-    if not cancelled(): open(rev_path, 'w').write('%d\n' % TRANSLATOR_REV)
+    open(rev_path, 'w').write('%d\n' % TRANSLATOR_REV)
     say('time %.1f s' % (time.time() - t0))
-    say('DONE %d %d' % (new_ok - len(removed), len(new_failed) + len(removed)))
+    say('DONE %d %d' % (new_ok, len(new_failed)))
     return 0
+
+
+# ---- worker processes ----
+_PATCHES = None
+
+
+def _job_shader(f, hx, kind, mode):
+    """mode 'new': translate + compile; 'redo': translate, compile only if the text changed; 'compile': compile only.
+    Returns (key, result, reason), result 'ok', 'unchanged', 'fail' or 'cancel'."""
+    global _PATCHES
+    import build_shader_cache as B, compile_cso
+    tr = os.path.dirname(f) if mode == 'compile' else os.path.join(os.path.dirname(f), 'translated')
+    if os.path.exists(os.path.join(tr, compile_cso.CANCEL_FLAG)): return hx, 'cancel', ''
+    if mode == 'compile':
+        if compile_cso.compile_one(f) == 'ok': return hx, 'ok', ''
+        os.remove(f)   # does not compile: dropped, like a failed translation
+        return hx, 'fail', '%s: compile' % kind
+    if _PATCHES is None: _PATCHES = B._patches()
+    body, why = B.translate_one(f, hx, kind, _PATCHES)
+    if body is None: return hx, 'fail', why
+    dst = os.path.join(tr, hx + '.hlsl')
+    if mode == 'redo' and os.path.exists(dst) and os.path.exists(dst[:-5] + '.cso'):
+        with open(dst, encoding='utf-8') as fh:
+            if fh.read() == body: return hx, 'unchanged', ''
+    tmp = dst + '.%d.tmp' % os.getpid()
+    with open(tmp, 'w', encoding='utf-8') as fh: fh.write(body)
+    os.replace(tmp, dst)
+    if compile_cso.compile_one(dst) == 'ok': return hx, 'ok', ''
+    os.remove(dst)
+    for ext in ('.cso', '.dxil.cso'):   # an older build of a shader that no longer compiles must not stay in use
+        if os.path.exists(dst[:-5] + ext): os.remove(dst[:-5] + ext)
+    return hx, 'fail', '%s: compile' % kind
+
+
+def _job_tess(game, vs_h, ds_h, ds_path, changed_only):
+    import tess_bypass, compile_cso
+    key = 'tess_%s_%s' % (vs_h, ds_h)
+    if os.path.exists(os.path.join(game, 'shaders', 'translated', compile_cso.CANCEL_FLAG)): return key, 'cancel', ''
+    try:
+        return key, tess_bypass.build_pair(game, vs_h, ds_h, ds_path, changed_only), ''
+    except Exception as e:
+        return key, 'fail', 'tess: ' + str(e)[:80]
 
 
 if __name__ == '__main__':

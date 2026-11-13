@@ -681,39 +681,16 @@ static void ApplyUiLanguage(HWND hwnd)
 
 #include "shader_prep.inc"
 
-// ---- first run: the game records the shaders it uses only when it runs, and without translations it stops
-// at the first screens. JOGAR on a new install therefore runs it a few times on its own ("warm-up"): each
-// round lets it record shaders until nothing new shows up for a while, closes it, translates, and repeats.
-#define TIMER_WARMUP      0x7701
 #define TIMER_PLAYTIME    0x7702
-#define WARMUP_MAX_ROUNDS 3
-static int g_warmRound = 0;           // > 0 while warming up
-static int g_warmDumpsBefore = 0, g_warmLastCount = 0;
-static ULONGLONG g_warmStart = 0, g_warmLastChange = 0;
-static bool g_warmKilled = false, g_warmNewDumps = false;
 static bool g_prepLaunch = true;      // start the game when the preparation finishes
 
-static void BeginWarmupRound(HWND hwnd)
-{
-    g_warmRound++;
-    g_warmDumpsBefore = g_warmLastCount = PrepCountDumps(g_gameDirShown);
-    g_warmStart = g_warmLastChange = GetTickCount64();
-    g_warmKilled = false;
-    LogPrintf(L"[Shaders] primeira execução: rodada %d de coleta de shaders (%d gravados até agora)\r\n", g_warmRound, g_warmDumpsBefore);
-    StartShaderPrep(hwnd, g_gameDirShown, g_warmRound);
-    g_prep->done = g_warmLastCount;
-    g_warmupLaunch = true;
-    g_hWorkerThread = CreateThread(nullptr, 0, GameSupervisorThread, &g_config, 0, nullptr);
-    SetTimer(hwnd, TIMER_WARMUP, 500, nullptr);
-}
-
-// preparation (translate -> compile -> pipelines); WM_SHADER_PREP_DONE starts the game if launch is set
+// preparation (packs -> translate + compile -> pipelines, shader_prep.inc); WM_SHADER_PREP_DONE starts the game if launch is set
 static void BeginShaderPrep(HWND hwnd, bool launch)
 {
     g_prepLaunch = launch;
     EnableWindow(g_hBtnLaunch, FALSE);
     SetWindowTextW(g_hBtnLaunch, T(S_PREP));
-    StartShaderPrep(hwnd, g_gameDirShown, 0, !launch);  // after the game closed there is time to optimize
+    StartShaderPrep(hwnd, g_gameDirShown);
 }
 
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -882,7 +859,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     case WM_GAME_STARTED:
         g_gameRunning = true;
         SetLaunchButtonState();
-        if (g_warmRound) { EnableWindow(g_hBtnLaunch, FALSE); SetWindowTextW(g_hBtnLaunch, T(S_PREP)); return 0; }
         g_playStartTick = GetTickCount64(); g_playProfile = g_config.playerName;
         SetTimer(hwnd, TIMER_PLAYTIME, 60000, nullptr);  // keeps the play time on the home card current
         if (g_discordOn)
@@ -893,13 +869,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
 
     case WM_SHADER_PREP_DONE:
-        if (g_warmRound)
-        {
-            bool skipped = g_prep && g_prep->cancel;
-            if (!skipped && g_warmNewDumps && g_warmRound < WARMUP_MAX_ROUNDS) { BeginWarmupRound(hwnd); return 0; }
-            LogPrintf(L"[Shaders] primeira execução concluída (%d rodada(s))\r\n", g_warmRound);
-            g_warmRound = 0;
-        }
         EnableWindow(g_hBtnLaunch, TRUE);
         SetLaunchButtonState();
         if (wcsstr(GetCommandLineW(), L"-prepshaders")) { DestroyWindow(hwnd); return 0; }  // prepare only, don't start the game
@@ -909,22 +878,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_TIMER:
         if (wParam == TIMER_PLAYTIME) { if (g_tab == 0) InvalidateRect(hwnd, nullptr, FALSE); return 0; }
-        if (wParam == TIMER_WARMUP)
-        {
-            if (!g_warmRound) { KillTimer(hwnd, TIMER_WARMUP); return 0; }
-            ULONGLONG now = GetTickCount64();
-            int n = PrepCountDumps(g_gameDirShown);
-            if (n != g_warmLastCount) { g_warmLastCount = n; g_warmLastChange = now; }
-            if (g_prep && g_prep->warmup) g_prep->done = n;
-            bool skip = g_prep && g_prep->warmup && g_prep->cancel;
-            // enough: nothing new for 10 s (after at least 20 s), 2 minutes in total, or "Pular"
-            if (g_hGameProcess && !g_warmKilled && (skip || (now - g_warmStart > 20000 && now - g_warmLastChange > 10000) || now - g_warmStart > 120000))
-            {
-                g_warmKilled = true;
-                TerminateProcess(g_hGameProcess, 0);
-            }
-            return 0;
-        }
         break;
 
     case WM_UPDATE_RESULT:
@@ -947,7 +900,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 swprintf_s(msgText, 512, T(S_UPD_ASK_INSTALL), r->tag, OLAUNCHER_VERSION);
                 if (MessageBoxW(hwnd, msgText, L"RushLauncher", MB_YESNO | MB_ICONINFORMATION) == IDYES)
                 {
-                    if (g_gameRunning || g_hPrepWnd || g_warmRound) MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"RushLauncher", MB_ICONINFORMATION);
+                    if (g_gameRunning || g_hPrepWnd) MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"RushLauncher", MB_ICONINFORMATION);
                     else if (StartUpdateDownload(hwnd, *r)) LogPrintf(L"[Atualização] baixando %ls…\r\n", r->asset);
                     UpdateButtonText();
                 }
@@ -977,7 +930,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_updateDownloading = false;
         UpdateButtonText();
         wchar_t msgText[512], err[160] = {};
-        if (job->ok && (g_gameRunning || g_hPrepWnd || g_warmRound))
+        if (job->ok && (g_gameRunning || g_hPrepWnd))
             MessageBoxW(hwnd, T(S_UPD_GAMERUN), L"RushLauncher", MB_ICONINFORMATION);
         else if (job->ok && LaunchUpdateInstaller(job, err, 160))
         {
@@ -1010,30 +963,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             g_playStartTick = 0;
             KillTimer(hwnd, TIMER_PLAYTIME);
         }
-        if (g_warmRound)
-        {   // end of a warm-up round: translate what it recorded (the next round or the game starts afterwards)
-            KillTimer(hwnd, TIMER_WARMUP);
-            g_warmupLaunch = false;
-            bool skipped = g_prep && g_prep->warmup && g_prep->cancel;
-            int n = PrepCountDumps(g_gameDirShown);
-            g_warmNewDumps = n > g_warmDumpsBefore;
-            LogPrintf(L"[Shaders] rodada %d: %d shader(s) novo(s) gravado(s)%ls\r\n", g_warmRound, n - g_warmDumpsBefore, skipped ? L" (pulado)" : L"");
-            if (g_hPrepWnd) DestroyWindow(g_hPrepWnd);
-            if (skipped) g_warmNewDumps = false;  // no more rounds; still prepare what was recorded (can be skipped too)
-            BeginShaderPrep(hwnd, true);
-            return 0;
-        }
         SetLaunchButtonState();
         g_discord.Clear();
         g_discord.Close();
-        // shaders recorded during this session get translated now, so the next JOGAR starts right away
+        // a shader the packs did not have (the bridge dumps any it meets) gets translated now, so the next JOGAR starts right away
         {
             wchar_t tr[MAX_PATH];
-            bool fresh = PrepTranslationNeeded(g_gameDirShown);
-            if (!g_hPrepWnd && PrepTranslatorExe(tr) && (fresh || PrepHasUnoptimized(g_gameDirShown)) && !wcsstr(GetCommandLineW(), L"-autolaunch"))
+            if (!g_hPrepWnd && PrepTranslatorExe(tr) && PrepTranslationNeeded(g_gameDirShown) && !wcsstr(GetCommandLineW(), L"-autolaunch"))
             {
-                LogPrintf(fresh ? L"[Shaders] o jogo gravou shaders novos: traduzindo para a próxima vez\r\n"
-                                : L"[Shaders] otimizando shaders de computação (pode pular)\r\n");
+                LogPrintf(L"[Shaders] o jogo gravou shaders novos: traduzindo para a próxima vez\r\n");
                 BeginShaderPrep(hwnd, false);
             }
         }
@@ -1073,20 +1011,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             if (FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") &&
                 (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") || GameExeIconStale(g_gameDirShown)) && BrandGameExe(g_gameDirShown))
                 LogPrintf(L"[Setup] onrush-pc.exe criado a partir de game_release_xbox.exe\r\n");
-            if (g_hPrepWnd || g_warmRound) return 0;  // already preparing
-            {
-                wchar_t tr[MAX_PATH];
-                if (PrepIsFreshInstall(g_gameDirShown) && PrepTranslatorExe(tr) && !wcsstr(GetCommandLineW(), L"-prepshaders") &&
-                    !wcsstr(GetCommandLineW(), L"-nowarmup"))
-                {   // new install: let the game record its shaders first (popup + a few short runs)
-                    EnableWindow(g_hBtnLaunch, FALSE);
-                    SetWindowTextW(g_hBtnLaunch, T(S_PREP));
-                    g_prepLaunch = true;
-                    BeginWarmupRound(hwnd);
-                    return 0;
-                }
-            }
-            // shader/pipeline preparation first (popup with progress); the game starts on WM_SHADER_PREP_DONE
+            if (g_hPrepWnd) return 0;  // already preparing
+            // shader/pipeline preparation first (popup with progress, the game is not opened for it); the game starts on WM_SHADER_PREP_DONE
             BeginShaderPrep(hwnd, true);
             return 0;
         case ID_VSYNC_CHK: g_vsyncOn = !g_vsyncOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;

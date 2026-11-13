@@ -52,3 +52,7 @@ def compile_to_bytes(src: bytes, target: str, flags: int = 0):
     if b'// sm6' in src:
         d, msg = _dxc(src, target); return d
     return _fxc_compile_to_bytes(src, target, flags)
+
+def dxc_compile(src: bytes, kind: str):
+    """Translated HLSL -> DXIL (kind_6_0) with dxc, whatever its '// sm6' marker says. Returns (bytes or None, error text)."""
+    return _dxc(src, kind + '_6_0')

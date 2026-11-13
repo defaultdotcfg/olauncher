@@ -35,8 +35,8 @@ Launcher e camada de tradução que rodam o **ONRUSH (Xbox One, versão final 1.
    - liga `dat\` e `EmbeddedXvd\` como atalhos (junctions) para a sua cópia, sem duplicar nada;
    - cria o `onrush-pc.exe`.
    A sua cópia não é alterada. Pela linha de comando: `OnRushLauncher.exe -setup "D:\caminho\do\pacote"`.
-4. **Shaders**: na primeira vez, o JOGAR mostra "Preparando shaders" e abre o jogo algumas vezes sozinho, numa janela pequena e sem som, para ele gravar os shaders que usa. O launcher traduz esses shaders (tradutor embutido em `translator\`, sem Python) e só então abre o jogo de verdade. Isso leva alguns minutos e acontece uma vez só.
-5. Depois, os shaders de menus e pistas que você ainda não tinha visitado são traduzidos quando o jogo fecha (ou no próximo JOGAR). O botão **Pular** do "Preparando shaders" abre o jogo na hora; o que faltou é feito na próxima vez.
+4. **Shaders**: na primeira vez, o JOGAR mostra "Preparando shaders" com uma barra só. O launcher lê os shaders direto dos pacotes do jogo (`dat\`), traduz e compila tudo de uma vez (tradutor embutido em `translator\`, sem Python) e só então abre o jogo. O jogo não é aberto para isso. Leva alguns minutos e acontece uma vez só (de novo apenas se os pacotes do jogo mudarem).
+5. O botão **Pular** do "Preparando shaders" abre o jogo na hora; o que faltou é feito no próximo JOGAR.
 6. O launcher procura novas versões no GitHub e, se você aceitar, se atualiza sozinho (configurações, saves, shaders e arquivos do jogo são mantidos).
 
 ## Como compilar

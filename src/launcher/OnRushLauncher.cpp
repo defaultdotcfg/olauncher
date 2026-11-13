@@ -124,7 +124,6 @@ static DWORD g_gamePid = 0;
 static bool g_gameRunning = false;
 static bool g_debugMode = false;      // launcher debug option: full logs + frame captures (set per game launch)
 static int g_firstChanceLogged = 0;   // first-chance exceptions logged in this game session
-static bool g_warmupLaunch = false;  // first-run warm-up (launcher_ui.inc): small window, no sound, killed after a while
 static HANDLE g_hWorkerThread = nullptr;
 
 // ============================================================================
@@ -432,17 +431,7 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     swprintf_s(envBuf, 64, L"%d", cfg->height);
     SetEnvironmentVariableW(L"ONRUSH_RES_HEIGHT", envBuf);
 
-    SetEnvironmentVariableW(L"ONRUSH_WINDOW_MODE", g_warmupLaunch ? L"Windowed" : cfg->windowMode);
-    if (g_warmupLaunch)
-    {
-        SetEnvironmentVariableW(L"ONRUSH_RES_WIDTH", L"960");
-        SetEnvironmentVariableW(L"ONRUSH_RES_HEIGHT", L"540");
-    }
-    {   // warm-up runs are silent; restore whatever the launcher had for normal runs
-        static bool s_noAudioSet = false;
-        if (g_warmupLaunch && GetEnvironmentVariableW(L"ONRUSH_NO_AUDIO", envBuf, 64) == 0) { SetEnvironmentVariableW(L"ONRUSH_NO_AUDIO", L"1"); s_noAudioSet = true; }
-        else if (!g_warmupLaunch && s_noAudioSet) { SetEnvironmentVariableW(L"ONRUSH_NO_AUDIO", nullptr); s_noAudioSet = false; }
-    }
+    SetEnvironmentVariableW(L"ONRUSH_WINDOW_MODE", cfg->windowMode);
 
     swprintf_s(envBuf, 64, L"%d", cfg->vsync);
     SetEnvironmentVariableW(L"ONRUSH_VSYNC", envBuf);
