@@ -4,6 +4,7 @@
 // The large image key "onrush" must be uploaded in the Discord developer portal
 // (Rich Presence > Art Assets) to show the picture; without it only the text appears.
 // ============================================================================
+#include "version.h"
 #include <string>
 #include <time.h>
 
@@ -82,10 +83,10 @@ struct DiscordRpc
         char json[1024];
         sprintf_s(json,
             "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":%lu,\"activity\":{"
-            "\"details\":\"Jogando ONRUSH\",\"state\":\"PC Native Port\","
+            "\"details\":\"Jogando ONRUSH\",\"state\":\"RushLauncher v%ls\","
             "\"timestamps\":{\"start\":%lld},"
             "\"assets\":{\"large_image\":\"onrush\",\"large_text\":\"ONRUSH\"}}},\"nonce\":\"%d\"}",
-            GetCurrentProcessId(), startEpoch, ++nonce);
+            GetCurrentProcessId(), OLAUNCHER_VERSION, startEpoch, ++nonce);
         std::string reply;
         if (!Write(1, json) || !ReadReply(&reply)) { lastError = "o Discord não respondeu ao SET_ACTIVITY"; Close(); return false; }
         if (reply.find("\"evt\":\"ERROR\"") != std::string::npos) { lastError = "o Discord recusou a atividade: " + reply.substr(0, 300); return false; }

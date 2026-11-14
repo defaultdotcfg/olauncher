@@ -1,5 +1,10 @@
 # Changelog
 
+## Não lançado
+
+### Launcher
+- Discord Rich Presence: a segunda linha mostra "RushLauncher v<versão>" (por exemplo, "RushLauncher v0.1.6") em vez de "PC Native Port".
+
 ## v0.1.5 — correção do crash no Windows 10
 
 **Como atualizar:** não é preciso apagar a pasta do launcher. A partir da v0.1.1, o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.
