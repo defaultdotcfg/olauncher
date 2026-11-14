@@ -70,11 +70,41 @@ static void OnText(float value, int) {
   log_line("[lang] text language -> %ls (%s)\r\n", kLocale[v], ok ? "reloaded" : "RELOAD FAILED");
 }
 
+// The game's dialog box (what "opponent left" uses): requests are 0x58-byte entries from the pool at
+// [exe+0x1814B38] ({+0 entries, +0x10 free list data, +0x18 free list bytes}) shown by
+// exe+0x1E5660(5, page name [exe+0x1432B80], request). Request: +0 button keys, +8 button count,
+// +0x10 callback(ctx, ?, button), +0x18 ctx, +0x40 title key, +0x48 text key, +0x50 [exe+0x1814B40], +0x54 1.
+static const char *const kOkButton[] = {"ID_OK"};
+static void __cdecl DialogClosed(void *, void *, int) {}
+
+static void ShowVoiceNotice() {
+  uint8_t *exe = (uint8_t *)gfxopt::g_exe;
+  uint8_t *pool = *(uint8_t **)(exe + 0x01814B38);
+  if (!pool || !*(uint8_t **)pool) return;
+  uint8_t *freeList = *(uint8_t **)(pool + 0x10);
+  uint64_t &freeBytes = *(uint64_t *)(pool + 0x18);
+  if (!freeList || freeBytes < 4) return;
+  uint32_t idx = *(uint32_t *)(freeList + freeBytes - 4);
+  freeBytes -= 4;
+  uint8_t *req = *(uint8_t **)pool + (uint64_t)idx * 0x58;
+  memset(req, 0, 0x58);
+  *(const char *const **)(req + 0x00) = kOkButton;
+  *(uint64_t *)(req + 0x08) = 1;
+  *(void **)(req + 0x10) = (void *)&DialogClosed;
+  *(const char **)(req + 0x40) = "ID_RL_VOICE";
+  *(const char **)(req + 0x48) = "ID_RL_VOICE_NOTICE";
+  *(uint32_t *)(req + 0x50) = *(uint32_t *)(exe + 0x01814B40);
+  *(uint8_t *)(req + 0x54) = 1;
+  typedef void (*PFN_Show)(int, void *, void *);
+  ((PFN_Show)(exe + 0x001E5660))(5, *(void **)(exe + 0x01432B80), req);
+}
+
 static void OnVoice(float value, int) {
   LONG v = gfxopt::ListIndex(value, kCount + 1);
   if (v == g_voice) return;
   g_voice = v;
   if (gfxopt::g_ini[0]) WritePrivateProfileStringW(L"Language", L"Voice", v ? kLocale[v - 1] : L"", gfxopt::g_ini);
+  ShowVoiceNotice();
   log_line("[lang] voice language -> %ls (next start)\r\n", v ? kLocale[v - 1] : L"same as text");
 }
 

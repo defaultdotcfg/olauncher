@@ -10,7 +10,7 @@
   - **Ajustes detalhados:** resolução interna (50% a 200%), sombras, detalhe do cenário, detalhe dos veículos, tesselação, névoa, efeitos de luz e detritos. Em "Auto", cada um segue a qualidade gráfica escolhida. Alguns ajustes só valem a partir da próxima corrida.
 - As escolhas ficam salvas para a próxima vez, e a opção V-Sync do launcher passou a funcionar.
 - Duas câmeras novas na corrida: **capô** e **cockpit** (primeira pessoa). O botão de trocar câmera (RB, ou E no teclado) agora alterna entre distante, próxima, capô e cockpit, e a última escolhida fica salva.
-- Nova página **Configurações > Vozes e texto**: o idioma dos textos muda na hora, sem reiniciar. O idioma das vozes também é escolhido ali e vale a partir da próxima vez que o jogo abrir.
+- Nova página **Configurações > Vozes e texto**: o idioma dos textos muda na hora, sem reiniciar. O idioma das vozes também é escolhido ali e vale a partir da próxima vez que o jogo abrir (um aviso do próprio jogo lembra disso ao trocar).
 - O jogo abre bem mais rápido: a tela inicial não espera mais pelos servidores online, que não existem mais, e entra direto no modo offline.
 - O Discord agora mostra "RushLauncher" e a versão em uso.
 
