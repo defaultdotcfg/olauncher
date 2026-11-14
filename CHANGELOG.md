@@ -1,5 +1,11 @@
 # Changelog
 
+## Não lançado
+
+### Launcher
+- Preparar o jogo de novo depois do patch falhava com "copiar SplashScreen.png (erro 32)": o launcher deixava a imagem de fundo aberta enquanto ela aparecia na tela. Agora a imagem é lida para a memória e o arquivo fica livre.
+- O `onrush-pc.exe` é recriado sempre que o `game_release_xbox.exe` for mais novo que ele. Antes, se a preparação parasse no meio depois do patch, o `onrush-pc.exe` continuava sendo o jogo antigo e fechava ao abrir.
+
 ## v0.1.2 — hotfix da v0.1.1
 
 **Como atualizar:** não é preciso apagar a pasta do launcher. Na v0.1.1 o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual. Apagar a pasta faria perder o jogo já preparado, os shaders e as configurações.

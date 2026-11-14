@@ -269,8 +269,23 @@ static void LoadHeroArt(const wchar_t *gameDir)
         {
             wchar_t p[MAX_PATH];
             swprintf_s(p, MAX_PATH, L"%ls%ls\\SplashScreen.png", d, s);
-            if (GetFileAttributesW(p) == INVALID_FILE_ATTRIBUTES) continue;
-            Gdiplus::Bitmap *b = Gdiplus::Bitmap::FromFile(p);
+            // Bitmap::FromFile keeps the file open (shared read only) while the bitmap lives, which made
+            // the setup fail to overwrite SplashScreen.png (error 32): load it from memory instead.
+            HANDLE h = CreateFileW(p, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (h == INVALID_HANDLE_VALUE) continue;
+            std::vector<BYTE> data;
+            LARGE_INTEGER sz = {};
+            if (GetFileSizeEx(h, &sz) && sz.QuadPart > 0 && sz.QuadPart < (64 << 20))
+            {
+                data.resize((size_t)sz.QuadPart);
+                DWORD got = 0;
+                if (!ReadFile(h, data.data(), (DWORD)data.size(), &got, nullptr) || got != data.size()) data.clear();
+            }
+            CloseHandle(h);
+            IStream *st = data.empty() ? nullptr : SHCreateMemStream(data.data(), (UINT)data.size());
+            if (!st) continue;
+            Gdiplus::Bitmap *b = Gdiplus::Bitmap::FromStream(st);  // holds its own reference to the stream
+            st->Release();
             if (b && b->GetLastStatus() == Gdiplus::Ok) { g_heroArt = b; ++g_heroGen; return; }
             delete b;
         }
@@ -1166,7 +1181,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
             if (!EnsureFinalGameVersion(hwnd, g_gameDirShown)) return 0;
             if (FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") &&
-                (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") || GameExeIconStale(g_gameDirShown)) && BrandGameExe(g_gameDirShown))
+                (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") || GameExeOutdated(g_gameDirShown) || GameExeIconStale(g_gameDirShown)) && BrandGameExe(g_gameDirShown))
                 LogPrintf(L"[Setup] onrush-pc.exe criado a partir de game_release_xbox.exe\r\n");
             if (g_hPrepWnd) return 0;  // already preparing
             // shader/pipeline preparation first (popup with progress, the game is not opened for it); the game starts on WM_SHADER_PREP_DONE

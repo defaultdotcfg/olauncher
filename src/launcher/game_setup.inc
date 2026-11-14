@@ -155,6 +155,18 @@ static bool CopyOwnIcon(HANDLE h)
     return UpdateResourceW(h, MAKEINTRESOURCEW(14), MAKEINTRESOURCEW(1), 0x0409, (void *)grp, gsz) != FALSE;
 }
 
+// True when game_release_xbox.exe changed after onrush-pc.exe was made from it (the copy was patched and
+// the setup did not get to rebrand it, e.g. it stopped on an error): onrush-pc.exe is the old game.
+static bool GameExeOutdated(const wchar_t *dir)
+{
+    wchar_t src[MAX_PATH], dst[MAX_PATH];
+    swprintf_s(src, MAX_PATH, L"%ls\\game_release_xbox.exe", dir);
+    swprintf_s(dst, MAX_PATH, L"%ls\\onrush-pc.exe", dir);
+    WIN32_FILE_ATTRIBUTE_DATA a, b;
+    if (!GetFileAttributesExW(src, GetFileExInfoStandard, &a) || !GetFileAttributesExW(dst, GetFileExInfoStandard, &b)) return false;
+    return CompareFileTime(&a.ftLastWriteTime, &b.ftLastWriteTime) > 0;
+}
+
 // True when onrush-pc.exe lacks the launcher's current icon (made by an older launcher, or the icon changed).
 static bool GameExeIconStale(const wchar_t *dir)
 {
