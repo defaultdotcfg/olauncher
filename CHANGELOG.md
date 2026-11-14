@@ -2,6 +2,9 @@
 
 ## Não lançado
 
+### Port
+- O jogo fechava logo no primeiro quadro em versões do Windows diferentes da usada no desenvolvimento (por exemplo, Windows 10 22H2), com crash em `dxgi.dll`. Um diagnóstico antigo do bridge sobrescrevia 14 bytes do `dxgi.dll` num endereço fixo, válido só para um build específico do Windows. Esse hook foi removido.
+
 ### Tradutor
 - Os pacotes do jogo também trazem ~5600 contêineres de shader sem programa do Xbox, que o jogo nunca usa. O log os mostrava como erro do Python (`AttributeError: 'NoneType' object has no attribute 'find'`), o que parecia uma falha da preparação. Agora eles aparecem como "no Xbox program (not used by the game)".
 

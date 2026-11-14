@@ -381,46 +381,6 @@ static PFN_CreateSwapChainForCoreWindow g_TrueCreateSwapChainForCoreWindow =
 
 static void *g_WrappedFactoryVtable[256] = {};
 
-static void HookedDXGIReportError(void *pObj, UINT msgId, void *a3, void *a4) {
-  void *caller = _ReturnAddress();
-  HMODULE hDxgi = GetModuleHandleW(L"dxgi.dll");
-  uintptr_t rva =
-      (hDxgi && caller >= hDxgi) ? ((uintptr_t)caller - (uintptr_t)hDxgi) : 0;
-  log_line("[d3d12_x] [DXGI DIAG] ReportError: msgId=0x%X (%u), pObj=%p, "
-           "caller=dxgi+0x%llX\r\n",
-           msgId, msgId, pObj, (unsigned long long)rva);
-}
-
-static void InstallDXGIDiagnosticHooks() {
-  static bool installed = false;
-  if (installed)
-    return;
-  installed = true;
-
-  HMODULE hDxgi = GetModuleHandleW(L"dxgi.dll");
-  if (!hDxgi)
-    hDxgi = LoadLibraryW(L"dxgi.dll");
-  if (!hDxgi)
-    return;
-
-  uint8_t *pReportErr = (uint8_t *)hDxgi + 0x1863C;
-  DWORD oldProt = 0;
-  if (VirtualProtect(pReportErr, 14, PAGE_EXECUTE_READWRITE, &oldProt)) {
-    uint8_t patch[14] = {0x48, 0xB8};
-    *(void **)(patch + 2) = (void *)&HookedDXGIReportError;
-    patch[10] = 0xFF;
-    patch[11] = 0xE0;
-    patch[12] = 0x90;
-    patch[13] = 0x90;
-    memcpy(pReportErr, patch, 14);
-    VirtualProtect(pReportErr, 14, oldProt, &oldProt);
-    FlushInstructionCache(GetCurrentProcess(), pReportErr, 14);
-    log_line(
-        "[d3d12_x] Installed DXGI ReportError hook at %p (rva=0x1863C)\r\n",
-        pReportErr);
-  }
-}
-
 static HRESULT STDMETHODCALLTYPE HookedCreateSwapChainForCoreWindow(
     IDXGIFactory2 *This, IUnknown *pDevice, IUnknown *pWindow,
     const DXGI_SWAP_CHAIN_DESC1 *pDesc, IDXGIOutput *pRestrictToOutput,
@@ -492,8 +452,6 @@ static HRESULT STDMETHODCALLTYPE HookedCreateSwapChainForCoreWindow(
     log_line("[d3d12_x] ERROR: g_TrueCreateSwapChainForHwnd is null\r\n");
     return E_FAIL;
   }
-
-  InstallDXGIDiagnosticHooks();
 
   // Desktop DXGI flip-model swap chains do not accept
   // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB (29) as the buffer format;
