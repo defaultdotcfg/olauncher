@@ -2,6 +2,9 @@
 
 ## Não lançado
 
+### Port
+- Alt+Enter não tirava o jogo da tela cheia quando ele abria em Borderless ou Fullscreen (o padrão): o primeiro Alt+Enter "ia para tela cheia" sem mudar nada e o segundo restaurava o mesmo estilo. Agora o primeiro Alt+Enter abre uma janela com moldura, centralizada, com a resolução do jogo (reduzida se não couber na área de trabalho), e o segundo volta para a tela cheia.
+
 ### Launcher
 - Discord Rich Presence: a segunda linha mostra "RushLauncher v<versão>" (por exemplo, "RushLauncher v0.1.6") em vez de "PC Native Port".
 

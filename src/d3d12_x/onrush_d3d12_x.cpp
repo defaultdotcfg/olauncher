@@ -956,6 +956,33 @@ static void ToggleBorderlessFullscreen(HWND hwnd) {
   }
 }
 
+// The game opened as a borderless window covering the screen (Borderless / Fullscreen): Alt+Enter must
+// know it is already "full" and where to go back to, a framed window. That window shows the render
+// size (shrunk, same aspect, when it does not fit the work area) centred on the monitor's work area.
+static void InitWindowedRestore(HWND hwnd, int clientW, int clientH) {
+  const DWORD style = WS_OVERLAPPEDWINDOW | WS_VISIBLE, exStyle = WS_EX_APPWINDOW;
+  MONITORINFO mi = {sizeof(mi)};
+  GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+  const RECT &work = mi.rcWork;
+  RECT fr = {0, 0, 100, 100};
+  AdjustWindowRectEx(&fr, style, FALSE, exStyle);
+  int frameW = (fr.right - fr.left) - 100, frameH = (fr.bottom - fr.top) - 100;
+  int availW = (work.right - work.left) - frameW, availH = (work.bottom - work.top) - frameH;
+  int cw = clientW > 0 ? clientW : 1280, ch = clientH > 0 ? clientH : 720;
+  if (cw > availW || ch > availH) {
+    double s = 0.9 * min((double)availW / cw, (double)availH / ch);
+    cw = (int)(cw * s); ch = (int)(ch * s);
+  }
+  int w = cw + frameW, h = ch + frameH;
+  g_savedWindowRect.left = work.left + ((work.right - work.left) - w) / 2;
+  g_savedWindowRect.top = work.top + ((work.bottom - work.top) - h) / 2;
+  g_savedWindowRect.right = g_savedWindowRect.left + w;
+  g_savedWindowRect.bottom = g_savedWindowRect.top + h;
+  g_savedStyle = style;
+  g_savedExStyle = exStyle;
+  g_isBorderlessFull = true;
+}
+
 // Called every Present: the window may be owned by a thread that never pumps messages, so
 // Alt+Enter is detected from the keyboard state (only while the game window has focus).
 // Alt+F4 / window close button: the Xbox game has no "quit" of its own (the console just suspends it),
@@ -1094,6 +1121,7 @@ static HWND EnsureDesktopWindow() {
     EnableWindow(g_desktopHwnd, FALSE);
     log_line("[window] ONRUSH_NO_FOCUS: window opened in the background\r\n");
   } else {
+    if (windowStyle & WS_POPUP) InitWindowedRestore(g_desktopHwnd, width, height);
     ShowWindow(g_desktopHwnd, SW_SHOWNORMAL);
     SetForegroundWindow(g_desktopHwnd);
     SetActiveWindow(g_desktopHwnd);
