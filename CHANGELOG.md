@@ -2,16 +2,18 @@
 
 ## Não lançado
 
-### Port
-- Novas opções gráficas dentro do próprio jogo, em Configurações > Gráficos, como linhas nativas do menu (no lugar onde o Xbox One X mostra "Elementos visuais"):
-  - **Qualidade gráfica**: Console (o perfil do Xbox One, como antes) ou os perfis de PC que os desenvolvedores deixaram nos arquivos do jogo, de Ultra baixa a Ultra. Eles mudam a resolução interna, o nível de detalhe (LOD) de cenário e veículos e a tesselação. A troca vale na hora e continua valendo depois do modo foto. O tamanho do mapa de sombras segue o do console.
-  - **Limite de quadros**: 30, 60, 90, 120, 144, 165, 240 ou sem limite. Antes o jogo pedia "a cada dois vblanks", então a taxa dependia do monitor (cerca de 70 FPS num monitor de 144 Hz).
-  - **V-Sync**: ligado ou desligado. Desligado, o jogo apresenta sem esperar o monitor (com tearing, quando o Windows permite). A opção VSync do launcher passa a funcionar e fica sincronizada com a do jogo.
-- As escolhas ficam salvas no `onrush.ini` (`[Graphics] Preset`/`FpsLimit` e `[Display] VSync`), e o launcher as relê quando o jogo fecha.
-- Alt+Enter não tirava o jogo da tela cheia quando ele abria em Borderless ou Fullscreen (o padrão): o primeiro Alt+Enter "ia para tela cheia" sem mudar nada e o segundo restaurava o mesmo estilo. Agora o primeiro Alt+Enter abre uma janela com moldura, centralizada, com a resolução do jogo (reduzida se não couber na área de trabalho), e o segundo volta para a tela cheia.
+### Novidades
+- Novas opções em **Configurações > Gráficos**, dentro do próprio jogo:
+  - **Qualidade gráfica:** de Ultra baixa a Ultra, ou Console (o visual original).
+  - **Limite de quadros:** de 30 a 240 FPS, ou sem limite.
+  - **V-Sync:** ligado ou desligado.
+- As escolhas ficam salvas para a próxima vez, e a opção V-Sync do launcher passou a funcionar.
+- Duas câmeras novas na corrida: **capô** e **cockpit** (primeira pessoa). O botão de trocar câmera (RB, ou E no teclado) agora alterna entre distante, próxima, capô e cockpit, e a última escolhida fica salva.
+- O jogo abre bem mais rápido: a tela inicial não espera mais pelos servidores online, que não existem mais, e entra direto no modo offline.
+- O Discord agora mostra "RushLauncher" e a versão em uso.
 
-### Launcher
-- Discord Rich Presence: a segunda linha mostra "RushLauncher v<versão>" (por exemplo, "RushLauncher v0.1.6") em vez de "PC Native Port".
+### Correções
+- Alt+Enter agora alterna corretamente entre tela cheia e janela.
 
 ## v0.1.5 — correção do crash no Windows 10
 

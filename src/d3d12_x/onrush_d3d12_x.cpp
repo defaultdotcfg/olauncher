@@ -4277,6 +4277,10 @@ static DWORD ScriptedButtons() {
         case 'R': m |= 0x800; break;
         case 'M': m |= PAD_MENU; break;
         case 'V': m |= PAD_VIEW; break;
+        case 'Q': m |= 0x1000; break;  // left shoulder
+        case 'E': m |= 0x2000; break;  // right shoulder
+        case 'S': m |= 0x4000; break;  // left stick click
+        case 'T': m |= 0x8000; break;  // right stick click
       }
     }
   }
@@ -7280,6 +7284,28 @@ static void PatchBootDoneFlag(HMODULE hExe) {
 }
 
 #include "gfx_options.inc"
+#include "cameras.inc"
+
+// Title screen without the dead online services. After "press A" the title state machine
+// (exe+0x3B4D42) sits in state 3 ("CONECTANDO") until GameSparks signs in, which never happens
+// now, or until its timeout ([obj+0x2F0] elapsed > [obj+0x2F8], ~20 s) runs out; state 4 then
+// shows "CONTINUAR OFFLINE" and waits for A ([obj+0x380] == 4) before loading (state 5).
+// Both waits go: the timeout counts as expired at once and state 4 continues offline by itself.
+static void PatchSkipOnlineWait(HMODULE hExe) {
+  uint8_t *timeout = (uint8_t *)hExe + 0x003B4EAC;  // cmp [rdi+2F0h], rax ; setg bl
+  uint8_t *accept = (uint8_t *)hExe + 0x003B4F45;   // jne (A not pressed on "continue offline")
+  static const uint8_t kTimeout[] = {0x48, 0x39, 0x87, 0xF0, 0x02, 0x00, 0x00, 0x0F, 0x9F, 0xC3};
+  static const uint8_t kAccept[] = {0x75, 0x28};
+  if (memcmp(timeout, kTimeout, sizeof(kTimeout)) != 0 || memcmp(accept, kAccept, sizeof(kAccept)) != 0 ||
+      memcmp(accept - 7, "\x83\xBF\x80\x03\x00\x00\x04", 7) != 0) {
+    log_line("[online] WARNING: unexpected title-screen code; online wait not skipped\r\n");
+    return;
+  }
+  static const uint8_t kExpired[] = {0xB3, 0x01, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};  // mov bl, 1
+  static const uint8_t kNop2[] = {0x90, 0x90};
+  if (gfxopt::WriteCode(timeout, kExpired, sizeof(kExpired)) && gfxopt::WriteCode(accept, kNop2, sizeof(kNop2)))
+    log_line("[online] title screen goes straight to offline play (no connection wait)\r\n");
+}
 
 // Voice (dub) language independent of the text language. audio:audiosystem.cfg maps each game_language
 // to an audio_language; exe+0x1F42A0 walks that table and at +0x1E9067 does
@@ -7661,6 +7687,8 @@ static void PatchAllocThunk(HMODULE hExe) {
   PatchGameFreeThunk(hExe);
   PatchBootDoneFlag(hExe);
   gfxopt::Install(hExe);
+  cams::Install(hExe);
+  PatchSkipOnlineWait(hExe);
   PatchVoiceLanguage(hExe);
   PatchUnlockCosmetics(hExe);
   PatchLoadRace207210(hExe);

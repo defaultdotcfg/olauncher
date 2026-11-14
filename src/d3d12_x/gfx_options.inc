@@ -222,7 +222,8 @@ static uint8_t *EmitJmpAbs(uint8_t *q, const void *to) {
 static bool WriteJmpRel(uint8_t *site, const uint8_t *to, size_t patchLen) {
   int64_t d = (int64_t)(to - (site + 5));
   if (d < INT32_MIN || d > INT32_MAX) return false;
-  uint8_t b[16];
+  uint8_t b[64];
+  if (patchLen < 5 || patchLen > sizeof(b)) return false;
   b[0] = 0xE9; int32_t d32 = (int32_t)d; memcpy(b + 1, &d32, 4);
   for (size_t i = 5; i < patchLen; ++i) b[i] = 0x90;
   return WriteCode(site, b, patchLen);
