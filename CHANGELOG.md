@@ -1,6 +1,8 @@
 # Changelog
 
-## Não lançado
+## v0.1.2 — hotfix da v0.1.1
+
+**Como atualizar:** não é preciso apagar a pasta do launcher. Na v0.1.1 o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual. Apagar a pasta faria perder o jogo já preparado, os shaders e as configurações.
 
 ### Launcher
 - O JOGAR agora confere a versão do jogo antes de abrir. Uma pasta preparada com uma cópia 1.0.64980.34 (por exemplo, a de uma instalação da v0.1.0 reaproveitada pela v0.1.1) fazia o jogo fechar logo no início. Agora o launcher acha a cópia original pelo atalho `dat`, pede a pasta do patch, atualiza a cópia para a 1.80.100.100 e prepara a pasta do jogo de novo. Se a cópia original não for encontrada, ele pede para escolher a cópia ([#2](https://github.com/defaultdotcfg/rushlauncher/issues/2)).
