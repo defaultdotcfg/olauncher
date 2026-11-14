@@ -7285,6 +7285,7 @@ static void PatchBootDoneFlag(HMODULE hExe) {
 
 #include "gfx_options.inc"
 #include "cameras.inc"
+#include "language.inc"
 
 // Title screen without the dead online services. After "press A" the title state machine
 // (exe+0x3B4D42) sits in state 3 ("CONECTANDO") until GameSparks signs in, which never happens
@@ -7688,6 +7689,7 @@ static void PatchAllocThunk(HMODULE hExe) {
   PatchBootDoneFlag(hExe);
   gfxopt::Install(hExe);
   cams::Install(hExe);
+  lang::Install(hExe);
   PatchSkipOnlineWait(hExe);
   PatchVoiceLanguage(hExe);
   PatchUnlockCosmetics(hExe);

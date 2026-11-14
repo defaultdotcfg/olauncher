@@ -1157,6 +1157,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             g_config.gfxPreset = GetPrivateProfileIntW(L"Graphics", L"Preset", g_config.gfxPreset, ini);
             g_config.fpsLimit = GetPrivateProfileIntW(L"Graphics", L"FpsLimit", g_config.fpsLimit, ini);
             g_vsyncOn = g_config.vsync != 0;
+            // ... and so were the languages picked in the game's first options page
+            GetPrivateProfileStringW(L"Language", L"Text", g_config.textLang, g_config.textLang, 16, ini);
+            GetPrivateProfileStringW(L"Language", L"Voice", g_config.voiceLang, g_config.voiceLang, 16, ini);
+            if (g_hTextLangCombo) FillGameLangCombo(g_hTextLangCombo, T(S_LANG_SYSTEM), g_config.textLang);
+            if (g_hVoiceLangCombo) FillGameLangCombo(g_hVoiceLangCombo, T(S_LANG_SAME), g_config.voiceLang);
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         if (g_minimizedForGame)

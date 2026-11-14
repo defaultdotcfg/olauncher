@@ -67,18 +67,19 @@ static void SaveIni() {
 // ---- texts --------------------------------------------------------------------------------------
 enum { L_EN, L_PT, L_FR, L_ES, L_DE, L_IT, L_PL, L_COUNT };
 
+static volatile LONG s_lang = -1;  // reset when the language is changed in game
 static int TextLang() {
-  static int s_lang = -1;
   if (s_lang >= 0) return s_lang;
   wchar_t loc[LOCALE_NAME_MAX_LENGTH] = {};
   DWORD n = GetEnvironmentVariableW(L"ONRUSH_TEXT_LANG", loc, LOCALE_NAME_MAX_LENGTH);
   if (n == 0 || n >= LOCALE_NAME_MAX_LENGTH) GetUserDefaultLocaleName(loc, LOCALE_NAME_MAX_LENGTH);
   static const struct { const wchar_t *pre; int lang; } map[] = {
     {L"pt", L_PT}, {L"fr", L_FR}, {L"es", L_ES}, {L"de", L_DE}, {L"it", L_IT}, {L"pl", L_PL}};
-  s_lang = L_EN;
+  int lang = L_EN;
   for (const auto &m : map)
-    if (_wcsnicmp(loc, m.pre, 2) == 0) s_lang = m.lang;
-  return s_lang;
+    if (_wcsnicmp(loc, m.pre, 2) == 0) lang = m.lang;
+  s_lang = lang;
+  return lang;
 }
 
 struct Text { const char *key; const char *t[L_COUNT]; };  // UTF-8, upper case like the game's own; en, pt, fr, es, de, it, pl.
@@ -122,6 +123,20 @@ static const Text kTexts[] = {
   {"ID_RL_M_HIGH", {"HIGH", "ALTO", "ÉLEVÉ", "ALTO", "HOCH", "ALTO", "WYSOKI"}},
   {"ID_RL_FEW", {"FEW", "POUCOS", "PEU", "POCOS", "WENIG", "POCHI", "MAŁO"}},
   {"ID_RL_MANY", {"MANY", "MUITOS", "BEAUCOUP", "MUCHOS", "VIELE", "MOLTI", "DUŻO"}},
+  // language rows (language.inc)
+  {"ID_RL_LANG", {"LANGUAGE", "IDIOMA", "LANGUE", "IDIOMA", "SPRACHE", "LINGUA", "JĘZYK"}},
+  {"ID_RL_VOICE", {"VOICE LANGUAGE", "IDIOMA DA VOZ", "LANGUE DES VOIX", "IDIOMA DE VOCES", "SPRACHAUSGABE",
+                   "LINGUA AUDIO", "JĘZYK GŁOSÓW"}},
+  {"ID_RL_SAME_AS_TEXT", {"SAME AS TEXT", "IGUAL AO TEXTO", "COMME LE TEXTE", "IGUAL AL TEXTO", "WIE TEXT",
+                          "COME IL TESTO", "JAK TEKST"}},
+  {"ID_RL_LANG_EN", {"ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH"}},
+  {"ID_RL_LANG_PT", {"PORTUGUÊS (BR)", "PORTUGUÊS (BR)", "PORTUGUÊS (BR)", "PORTUGUÊS (BR)", "PORTUGUÊS (BR)",
+                     "PORTUGUÊS (BR)", "PORTUGUÊS (BR)"}},
+  {"ID_RL_LANG_ES", {"ESPAÑOL", "ESPAÑOL", "ESPAÑOL", "ESPAÑOL", "ESPAÑOL", "ESPAÑOL", "ESPAÑOL"}},
+  {"ID_RL_LANG_FR", {"FRANÇAIS", "FRANÇAIS", "FRANÇAIS", "FRANÇAIS", "FRANÇAIS", "FRANÇAIS", "FRANÇAIS"}},
+  {"ID_RL_LANG_DE", {"DEUTSCH", "DEUTSCH", "DEUTSCH", "DEUTSCH", "DEUTSCH", "DEUTSCH", "DEUTSCH"}},
+  {"ID_RL_LANG_IT", {"ITALIANO", "ITALIANO", "ITALIANO", "ITALIANO", "ITALIANO", "ITALIANO", "ITALIANO"}},
+  {"ID_RL_LANG_PL", {"POLSKI", "POLSKI", "POLSKI", "POLSKI", "POLSKI", "POLSKI", "POLSKI"}},
 };
 // Percentages (same in every language).
 static const char *const kPctKeys[] = {"ID_RL_PCT_50", "ID_RL_PCT_67", "ID_RL_PCT_75", "ID_RL_PCT_85",
