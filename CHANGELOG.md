@@ -1,6 +1,8 @@
 # Changelog
 
-## Não lançado
+## v0.1.3 — correções na atualização do jogo para a 1.80
+
+**Como atualizar:** não é preciso apagar a pasta do launcher. Na v0.1.1 ou v0.1.2, o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual. Apagar a pasta faria perder o jogo já preparado, os shaders e as configurações.
 
 ### Launcher
 - Preparar o jogo de novo depois do patch falhava com "copiar SplashScreen.png (erro 32)": o launcher deixava a imagem de fundo aberta enquanto ela aparecia na tela. Agora a imagem é lida para a memória e o arquivo fica livre.
