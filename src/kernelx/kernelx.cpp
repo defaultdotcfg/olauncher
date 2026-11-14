@@ -20,7 +20,17 @@ static DWORD WIN32_FROM_HRESULT(_In_ HRESULT hr) {
 //
 // General APIs
 //
-EXTERN_C CONSOLE_TYPE WINAPI GetConsoleType() { return CONSOLE_TYPE_XBOX_ONE; }
+// ONRUSH_CONSOLE_TYPE=1..4 (Xbox One, One S, One X, One X devkit) overrides the console model the game sees.
+EXTERN_C CONSOLE_TYPE WINAPI GetConsoleType() {
+  static int s_type = -1;
+  if (s_type < 0) {
+    wchar_t v[8] = {};
+    DWORD n = GetEnvironmentVariableW(L"ONRUSH_CONSOLE_TYPE", v, 8);
+    int t = (n > 0 && n < 8) ? _wtoi(v) : 0;
+    s_type = (t >= CONSOLE_TYPE_XBOX_ONE && t <= CONSOLE_TYPE_XBOX_ONE_X_DEVKIT) ? t : CONSOLE_TYPE_XBOX_ONE;
+  }
+  return (CONSOLE_TYPE)s_type;
+}
 
 EXTERN_C VOID WINAPI
 GetSystemOSVersion(_Out_ LPSYSTEMOSVERSIONINFO lpVersionInformation) {

@@ -1150,6 +1150,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_GAME_EXITED:
         g_gameRunning = false;
+        {   // options changed in the game's GRAPHICS page were written to onrush.ini: take them back
+            wchar_t ini[MAX_PATH];
+            swprintf_s(ini, MAX_PATH, L"%ls\\onrush.ini", g_exeDir);
+            g_config.vsync = GetPrivateProfileIntW(L"Display", L"VSync", g_config.vsync, ini);
+            g_config.gfxPreset = GetPrivateProfileIntW(L"Graphics", L"Preset", g_config.gfxPreset, ini);
+            g_config.fpsLimit = GetPrivateProfileIntW(L"Graphics", L"FpsLimit", g_config.fpsLimit, ini);
+            g_vsyncOn = g_config.vsync != 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         if (g_minimizedForGame)
         {   // minimized by "Minimizar o launcher ao jogar": back when the game closes
             g_minimizedForGame = false;

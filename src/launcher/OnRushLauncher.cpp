@@ -106,6 +106,8 @@ struct LauncherConfig
     int height;
     wchar_t windowMode[32]; // Windowed, Borderless, Fullscreen
     int vsync;
+    int gfxPreset;          // in-game "Graphics quality": 0 console, 1..5 PC ultra low .. ultra
+    int fpsLimit;           // in-game "Frame rate limit" (fps, 0 = unlimited)
     wchar_t gamePath[MAX_PATH];
     wchar_t savePath[MAX_PATH];
     int diagnostics;
@@ -168,6 +170,8 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->height = 1080;
     wcscpy_s(cfg->windowMode, 32, L"Borderless");
     cfg->vsync = 1;
+    cfg->gfxPreset = 0;
+    cfg->fpsLimit = 60;
     cfg->gamePath[0] = L'\0';
     wcscpy_s(cfg->savePath, MAX_PATH, L".\\save");
     cfg->diagnostics = 1;
@@ -201,6 +205,8 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     cfg->height = GetPrivateProfileIntW(L"Display", L"Height", cfg->height, iniPath);
     GetPrivateProfileStringW(L"Display", L"WindowMode", cfg->windowMode, cfg->windowMode, 32, iniPath);
     cfg->vsync = GetPrivateProfileIntW(L"Display", L"VSync", cfg->vsync, iniPath);
+    cfg->gfxPreset = GetPrivateProfileIntW(L"Graphics", L"Preset", cfg->gfxPreset, iniPath);
+    cfg->fpsLimit = GetPrivateProfileIntW(L"Graphics", L"FpsLimit", cfg->fpsLimit, iniPath);
     GetPrivateProfileStringW(L"System", L"GamePath", cfg->gamePath, cfg->gamePath, MAX_PATH, iniPath);
     GetPrivateProfileStringW(L"System", L"SavePath", cfg->savePath, cfg->savePath, MAX_PATH, iniPath);
     cfg->diagnostics = GetPrivateProfileIntW(L"System", L"Diagnostics", cfg->diagnostics, iniPath);
@@ -238,6 +244,10 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
 
     swprintf_s(buf, 64, L"%d", cfg->vsync);
     WritePrivateProfileStringW(L"Display", L"VSync", buf, iniPath);
+    swprintf_s(buf, 64, L"%d", cfg->gfxPreset);
+    WritePrivateProfileStringW(L"Graphics", L"Preset", buf, iniPath);
+    swprintf_s(buf, 64, L"%d", cfg->fpsLimit);
+    WritePrivateProfileStringW(L"Graphics", L"FpsLimit", buf, iniPath);
 
     WritePrivateProfileStringW(L"System", L"GamePath", cfg->gamePath, iniPath);
     WritePrivateProfileStringW(L"System", L"SavePath", cfg->savePath, iniPath);
@@ -476,6 +486,12 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 
     swprintf_s(envBuf, 64, L"%d", cfg->vsync);
     SetEnvironmentVariableW(L"ONRUSH_VSYNC", envBuf);
+    // In-game GRAPHICS rows (bridge gfx_options.inc): start values, and the ini the game writes changes to.
+    swprintf_s(envBuf, 64, L"%d", cfg->gfxPreset);
+    SetEnvironmentVariableW(L"ONRUSH_GFX_PRESET", envBuf);
+    swprintf_s(envBuf, 64, L"%d", cfg->fpsLimit);
+    SetEnvironmentVariableW(L"ONRUSH_FPS_LIMIT", envBuf);
+    SetEnvironmentVariableW(L"ONRUSH_INI", iniPath);
 
     swprintf_s(envBuf, 64, L"%d", cfg->d3d12Debug);
     SetEnvironmentVariableW(L"ONRUSH_D3D12_DEBUG", envBuf);

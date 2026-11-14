@@ -3,6 +3,11 @@
 ## Não lançado
 
 ### Port
+- Novas opções gráficas dentro do próprio jogo, em Configurações > Gráficos, como linhas nativas do menu (no lugar onde o Xbox One X mostra "Elementos visuais"):
+  - **Qualidade gráfica**: Console (o perfil do Xbox One, como antes) ou os perfis de PC que os desenvolvedores deixaram nos arquivos do jogo, de Ultra baixa a Ultra. Eles mudam a resolução interna, o nível de detalhe (LOD) de cenário e veículos e a tesselação. A troca vale na hora e continua valendo depois do modo foto. O tamanho do mapa de sombras segue o do console.
+  - **Limite de quadros**: 30, 60, 90, 120, 144, 165, 240 ou sem limite. Antes o jogo pedia "a cada dois vblanks", então a taxa dependia do monitor (cerca de 70 FPS num monitor de 144 Hz).
+  - **V-Sync**: ligado ou desligado. Desligado, o jogo apresenta sem esperar o monitor (com tearing, quando o Windows permite). A opção VSync do launcher passa a funcionar e fica sincronizada com a do jogo.
+- As escolhas ficam salvas no `onrush.ini` (`[Graphics] Preset`/`FpsLimit` e `[Display] VSync`), e o launcher as relê quando o jogo fecha.
 - Alt+Enter não tirava o jogo da tela cheia quando ele abria em Borderless ou Fullscreen (o padrão): o primeiro Alt+Enter "ia para tela cheia" sem mudar nada e o segundo restaurava o mesmo estilo. Agora o primeiro Alt+Enter abre uma janela com moldura, centralizada, com a resolução do jogo (reduzida se não couber na área de trabalho), e o segundo volta para a tela cheia.
 
 ### Launcher

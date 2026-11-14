@@ -173,6 +173,7 @@ D3D12_RESOURCE_STATES GetTrackedResourceState(ID3D12Resource* pRes, D3D12_RESOUR
 static ID3D12InfoQueue *g_pD3D12InfoQueue = nullptr;
 static ID3D12Device *g_pMainDevice = nullptr;
 static IDXGIFactory2 *g_pDXGIFactory2 = nullptr;
+namespace gfxopt { static bool TearingFlag(IDXGIFactory2 *f); }  // gfx_options.inc
 static ID3D12CommandQueue *g_pDirectCommandQueue = nullptr;
 static IDXGISwapChain1 *g_pMainSwapChain = nullptr;
 static ID3D12Resource *g_pSwapChainBuffers[4] = {};
@@ -476,6 +477,8 @@ static HRESULT STDMETHODCALLTYPE HookedCreateSwapChainForCoreWindow(
     if (descConverted.BufferCount < 2) {
       descConverted.BufferCount = 2;
     }
+    // Vertical sync off (in-game option) presents with tearing allowed, which needs the swap-chain flag.
+    if (gfxopt::TearingFlag(This ? This : g_pDXGIFactory2)) descConverted.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
     // Stretch the fixed-size backbuffer to the window (window resize / Alt+Enter toggle).
     descConverted.Scaling = DXGI_SCALING_STRETCH;
     pDescForCall = &descConverted;
@@ -7276,6 +7279,8 @@ static void PatchBootDoneFlag(HMODULE hExe) {
   }
 }
 
+#include "gfx_options.inc"
+
 // Voice (dub) language independent of the text language. audio:audiosystem.cfg maps each game_language
 // to an audio_language; exe+0x1F42A0 walks that table and at +0x1E9067 does
 // strcmp([r15+8] = current game language, entry.game_language). Launcher option ONRUSH_VOICE_LANG
@@ -7655,6 +7660,7 @@ static void PatchAllocThunk(HMODULE hExe) {
   HookSetRtpc(hExe);
   PatchGameFreeThunk(hExe);
   PatchBootDoneFlag(hExe);
+  gfxopt::Install(hExe);
   PatchVoiceLanguage(hExe);
   PatchUnlockCosmetics(hExe);
   PatchLoadRace207210(hExe);
@@ -12299,6 +12305,15 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
     }
   }
 
+  {  // frame rate every 5 s, with the sync interval the game asks for (30 fps = 2, 60 fps = 1)
+    static ULONGLONG s_fpsT0 = 0; static long s_fpsF0 = 0;
+    ULONGLONG now = GetTickCount64();
+    if (!s_fpsT0) { s_fpsT0 = now; s_fpsF0 = frame_count; }
+    else if (now - s_fpsT0 >= 5000) {
+      log_line("[fps] %.1f fps (game flip rate %u)\r\n", (frame_count - s_fpsF0) * 1000.0 / (double)(now - s_fpsT0), SyncInterval);
+      s_fpsT0 = now; s_fpsF0 = frame_count;
+    }
+  }
   if (frame_count <= 10 || (frame_count % 60) == 0) {
     log_line("[d3d12_x] DXGIXPresentArray frame %u (sync=%u, thresh=%u, "
              "flags=0x%X, numSwapChains=%u, ppSwapChains=%p, pParams=%p, g_pMainSwapChain=%p)\r\n",
@@ -12882,7 +12897,9 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
       }
     }
 
-    UINT sync = SyncInterval ? SyncInterval : 1;
+    // The game asks for FlipRate vblanks (2 = 30 Hz on a 60 Hz TV); pacing follows the in-game
+    // "Frame rate limit" / "Vertical sync" rows instead (gfx_options.inc).
+    UINT sync = gfxopt::PresentSync(g_desktopHwnd, &Flags);
     // The game renders straight into the swap-chain buffer (Durango has no states): make sure the
     // buffer is really in PRESENT state when it is presented.
     if (pCurrentBackBuffer && g_pDirectCommandQueue && InitBlitInfrastructure()) {
