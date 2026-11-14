@@ -7,6 +7,7 @@
   - **Qualidade gráfica:** de Ultra baixa a Ultra, ou Console (o visual original).
   - **Limite de quadros:** de 30 a 240 FPS, ou sem limite.
   - **V-Sync:** ligado ou desligado.
+  - **Ajustes detalhados:** resolução interna (50% a 200%), sombras, detalhe do cenário, detalhe dos veículos, tesselação, névoa, efeitos de luz e detritos. Em "Auto", cada um segue a qualidade gráfica escolhida. Alguns ajustes só valem a partir da próxima corrida.
 - As escolhas ficam salvas para a próxima vez, e a opção V-Sync do launcher passou a funcionar.
 - Duas câmeras novas na corrida: **capô** e **cockpit** (primeira pessoa). O botão de trocar câmera (RB, ou E no teclado) agora alterna entre distante, próxima, capô e cockpit, e a última escolhida fica salva.
 - O jogo abre bem mais rápido: a tela inicial não espera mais pelos servidores online, que não existem mais, e entra direto no modo offline.
