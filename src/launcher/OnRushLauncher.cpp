@@ -855,7 +855,7 @@ static std::vector<PrereqItem> CheckPrerequisites(const wchar_t *gameDir = nullp
         { L"Audio Coprocessor (AcpHal)", L"AcpHal.dll", true, false },
         { L"Console GFX Driver (xg_x)", L"xg_x.dll", true, false },
         { L"Video Decoder (Bink2)", L"Bink2XboxOne.dll", true, false },
-        { L"Junction de Assets (dat/)", L"dat", true, false },
+        { L"Junction de Assets (dat/)", L"dat\\index\\dat.ndx", true, false },
     };
 
     const wchar_t *targetDir = (gameDir && gameDir[0] != L'\0') ? gameDir : g_exeDir;

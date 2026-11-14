@@ -102,6 +102,30 @@ static bool CreateJunction(const wchar_t *link, const wchar_t *target)
     return ok != FALSE;
 }
 
+// Where a junction points (its print name), even when the target no longer exists. "" if not a junction.
+static std::wstring JunctionTarget(const wchar_t *link)
+{
+    HANDLE h = CreateFileW(link, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return L"";
+    std::vector<BYTE> buf(MAXIMUM_REPARSE_DATA_BUFFER_SIZE);
+    DWORD got = 0;
+    BOOL ok = DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, nullptr, 0, buf.data(), (DWORD)buf.size(), &got, nullptr);
+    CloseHandle(h);
+    if (!ok || got < 16 || *(DWORD *)&buf[0] != IO_REPARSE_TAG_MOUNT_POINT) return L"";
+    const WORD *m = (const WORD *)&buf[8];  // substitute offset/length, print offset/length (bytes)
+    if (16u + m[2] + m[3] <= got && m[3])
+        return std::wstring((const wchar_t *)&buf[16 + m[2]], m[3] / 2);
+    std::wstring sub((const wchar_t *)&buf[16 + m[0]], m[1] / 2);
+    return sub.compare(0, 4, L"\\??\\") ? sub : sub.substr(4);
+}
+
+// The game's packs can be read from the folder (the dat junction leads to a copy that still exists).
+static bool GameAssetsReachable(const wchar_t *dir)
+{
+    return FileExistsIn(dir, L"dat\\index\\dat.ndx");
+}
+
 // ---- VS_VERSIONINFO builder (same layout as scripts/brand_exe.py) ---------------------------
 static void VerPad(std::vector<BYTE> &b) { while (b.size() % 4) b.push_back(0); }
 static std::vector<BYTE> VerNode(const wchar_t *key, const std::vector<BYTE> &value, WORD type, const std::vector<BYTE> &children, int valueLen = -1)
@@ -251,7 +275,14 @@ static bool SetupGameFolder(const wchar_t *mount, const wchar_t *root, const wch
     for (auto &l : links)
     {
         swprintf_s(d, MAX_PATH, L"%ls\\%ls", destDir, l.name);
-        if (same || GetFileAttributesW(l.target) == INVALID_FILE_ATTRIBUTES || GetFileAttributesW(d) != INVALID_FILE_ATTRIBUTES) continue;
+        if (same || GetFileAttributesW(l.target) == INVALID_FILE_ATTRIBUTES) continue;
+        DWORD da = GetFileAttributesW(d);
+        if (da != INVALID_FILE_ATTRIBUTES)
+        {
+            // a junction from an earlier setup may point at another copy, or at one that was moved or renamed
+            if (!(da & FILE_ATTRIBUTE_REPARSE_POINT) || !_wcsicmp(JunctionTarget(d).c_str(), l.target)) continue;
+            if (!RemoveDirectoryW(d)) { err = std::wstring(L"trocar o atalho ") + l.name + L" (erro " + std::to_wstring(GetLastError()) + L")"; return false; }
+        }
         if (!CreateJunction(d, l.target)) { err = std::wstring(L"criar o atalho ") + l.name + L" (erro " + std::to_wstring(GetLastError()) + L")"; return false; }
         LogPrintf(L"[Setup] %ls -> %ls\r\n", d, l.target);
     }

@@ -125,7 +125,7 @@ enum UiStr {
     S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL,
     S_HOME_TITLE, S_HOME_HINT, S_INSTALL_TITLE, S_INSTALL_HINT, S_INSTALL_READY, S_INSTALL_MISSING,
     S_PATCH_ASK, S_PICK_PATCH, S_BAD_PATCH, S_PATCH_CONFIRM, S_PATCH_PROGRESS, S_PATCH_FAIL, S_HOME_PROFILE, S_HOME_PLAYTIME,
-    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_OLD_GAME, S_COUNT
+    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_OLD_GAME, S_LOST_COPY, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -230,6 +230,9 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"O jogo nesta pasta é a versão %ls, mas o port funciona só com a versão final, %ls.\n\nEscolha a sua cópia do ONRUSH (o pacote extraído) para o launcher atualizá-la com o patch e preparar o jogo de novo.",
       L"The game in this folder is version %ls, but the port only works with the final version, %ls.\n\nChoose your ONRUSH copy (the extracted package) so the launcher can update it with the patch and set the game up again.",
       L"El juego en esta carpeta es la versión %ls, pero el port solo funciona con la versión final, %ls.\n\nElige tu copia de ONRUSH (el paquete extraído) para que el launcher la actualice con el parche y prepare el juego de nuevo." },
+    { L"A pasta do jogo foi preparada a partir da cópia do ONRUSH em\n%ls\nmas essa pasta não existe mais (foi movida, renomeada ou apagada).\n\nEscolha onde está a sua cópia do ONRUSH (o pacote extraído) para o launcher ligar a pasta do jogo a ela de novo.",
+      L"The game folder was set up from the ONRUSH copy at\n%ls\nbut that folder no longer exists (it was moved, renamed or deleted).\n\nChoose where your ONRUSH copy (the extracted package) is now so the launcher can point the game folder at it again.",
+      L"La carpeta del juego se preparó a partir de la copia de ONRUSH en\n%ls\npero esa carpeta ya no existe (se movió, renombró o borró).\n\nElige dónde está tu copia de ONRUSH (el paquete extraído) para que el launcher vuelva a enlazar la carpeta del juego con ella." },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
 
@@ -385,6 +388,35 @@ static bool AskGameFolder(HWND hwnd)
 // hold a copy prepared before the version check existed (or by an older launcher) that was never patched.
 // An old copy is patched and the files copied from it are refreshed. True when the game can start.
 static void ReadUiIntoConfig();
+
+// The game folder's dat junction leads nowhere (the copy it was set up from was moved, renamed or deleted):
+// asks for the copy, updates it to the final version if needed and points the folder at it again.
+static bool RelinkGameCopy(HWND hwnd, const wchar_t *gameDir)
+{
+    wchar_t dat[MAX_PATH], msg[1024], dir[MAX_PATH], mount[MAX_PATH], root[MAX_PATH];
+    swprintf_s(dat, MAX_PATH, L"%ls\\dat", gameDir);
+    std::wstring was = JunctionTarget(dat);
+    LogPrintf(L"[Setup] pacotes do jogo inacessíveis em %ls (dat -> %ls)\r\n", gameDir, was.empty() ? L"?" : was.c_str());
+    swprintf_s(msg, 1024, T(S_LOST_COPY), was.empty() ? dat : was.c_str());
+    if (MessageBoxW(hwnd, msg, L"ONRUSH", MB_ICONWARNING | MB_OKCANCEL) != IDOK) return false;
+    for (;;)
+    {
+        if (!PickFolder(hwnd, T(S_PICK_GAME), dir)) return false;
+        if (FindGameCopy(dir, mount, root) && _wcsicmp(mount, gameDir) != 0 && GameAssetsReachable(mount)) break;
+        if (MessageBoxW(hwnd, T(S_BAD_DIR), L"ONRUSH", MB_ICONWARNING | MB_YESNO) != IDYES) return false;
+    }
+    if (GameCopyVersion(mount) != kFinalVersion && !OfferGamePatch(hwnd, mount, root)) return false;
+    std::wstring err;
+    if (!SetupGameFolder(mount, root, gameDir, err))
+    {
+        swprintf_s(msg, 1024, T(S_SETUP_FAIL), err.c_str());
+        MessageBoxW(hwnd, msg, L"ONRUSH", MB_ICONERROR);
+        return false;
+    }
+    LogPrintf(L"[Setup] %ls ligado de novo à cópia em %ls\r\n", gameDir, root);
+    return GameAssetsReachable(gameDir);
+}
+
 static bool EnsureFinalGameVersion(HWND hwnd, const wchar_t *gameDir)
 {
     wchar_t mount[MAX_PATH], root[MAX_PATH], msg[1024];
@@ -1179,6 +1211,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
                 RefreshGameDirStatus(hwnd);
             }
+            if (!GameAssetsReachable(g_gameDirShown) && !RelinkGameCopy(hwnd, g_gameDirShown)) return 0;
             if (!EnsureFinalGameVersion(hwnd, g_gameDirShown)) return 0;
             if (FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") &&
                 (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") || GameExeOutdated(g_gameDirShown) || GameExeIconStale(g_gameDirShown)) && BrandGameExe(g_gameDirShown))

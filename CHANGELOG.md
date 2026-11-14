@@ -1,5 +1,10 @@
 # Changelog
 
+## Não lançado
+
+### Launcher
+- Se a cópia do ONRUSH usada na preparação for movida, renomeada ou apagada, os atalhos `dat` e `EmbeddedXvd` da pasta do jogo ficavam apontando para o nada e o jogo fechava logo ao abrir. Agora o JOGAR percebe isso, mostra onde a cópia estava, pede a pasta nova (aplicando o patch se ela não estiver na 1.80) e liga a pasta do jogo a ela de novo. O diagnóstico do log passou a conferir os pacotes de verdade (`dat\index\dat.ndx`), não só se o atalho existe.
+
 ## v0.1.3 — correções na atualização do jogo para a 1.80
 
 **Como atualizar:** não é preciso apagar a pasta do launcher. Na v0.1.1 ou v0.1.2, o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual. Apagar a pasta faria perder o jogo já preparado, os shaders e as configurações.
