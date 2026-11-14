@@ -1,6 +1,8 @@
 # Changelog
 
-## Não lançado
+## v0.1.5 — correção do crash no Windows 10
+
+**Como atualizar:** não é preciso apagar a pasta do launcher. A partir da v0.1.1, o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.
 
 ### Port
 - O jogo fechava logo no primeiro quadro em versões do Windows diferentes da usada no desenvolvimento (por exemplo, Windows 10 22H2), com crash em `dxgi.dll`. Um diagnóstico antigo do bridge sobrescrevia 14 bytes do `dxgi.dll` num endereço fixo, válido só para um build específico do Windows. Esse hook foi removido.
