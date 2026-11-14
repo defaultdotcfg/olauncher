@@ -123,10 +123,11 @@ static const Text kTexts[] = {
   {"ID_RL_M_HIGH", {"HIGH", "ALTO", "ÉLEVÉ", "ALTO", "HOCH", "ALTO", "WYSOKI"}},
   {"ID_RL_FEW", {"FEW", "POUCOS", "PEU", "POCOS", "WENIG", "POCHI", "MAŁO"}},
   {"ID_RL_MANY", {"MANY", "MUITOS", "BEAUCOUP", "MUCHOS", "VIELE", "MOLTI", "DUŻO"}},
-  // language rows (language.inc)
-  {"ID_RL_LANG", {"LANGUAGE", "IDIOMA", "LANGUE", "IDIOMA", "SPRACHE", "LINGUA", "JĘZYK"}},
-  {"ID_RL_VOICE", {"VOICE LANGUAGE", "IDIOMA DA VOZ", "LANGUE DES VOIX", "IDIOMA DE VOCES", "SPRACHAUSGABE",
-                   "LINGUA AUDIO", "JĘZYK GŁOSÓW"}},
+  // voices and text page (language.inc)
+  {"ID_RL_VOICE_TEXT", {"VOICES AND TEXT", "VOZES E TEXTO", "VOIX ET TEXTE", "VOCES Y TEXTO", "STIMMEN UND TEXT",
+                        "VOCI E TESTO", "GŁOSY I TEKST"}},
+  {"ID_RL_LANG", {"TEXT", "TEXTO", "TEXTE", "TEXTO", "TEXT", "TESTO", "TEKST"}},
+  {"ID_RL_VOICE", {"VOICES", "VOZES", "VOIX", "VOCES", "STIMMEN", "VOCI", "GŁOSY"}},
   {"ID_RL_SAME_AS_TEXT", {"SAME AS TEXT", "IGUAL AO TEXTO", "COMME LE TEXTE", "IGUAL AL TEXTO", "WIE TEXT",
                           "COME IL TESTO", "JAK TEKST"}},
   {"ID_RL_LANG_EN", {"ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH"}},

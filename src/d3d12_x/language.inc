@@ -1,4 +1,4 @@
-// Language rows on the first page of the game's Options (after "Button prompts"), text switched live.
+// Options page "Voices and text" (text language switched live, voice language from the next start).
 //
 // The game loads its texts once at boot (exe+0x2ED9CF): exe+0x22E4B0 loads
 // code:localisation/xbox/<lang>.loc through exe+0x22E140(asset registry [exe+0x1681D38]), the language
@@ -78,7 +78,51 @@ static void OnVoice(float value, int) {
   log_line("[lang] voice language -> %ls (next start)\r\n", v ? kLocale[v - 1] : L"same as text");
 }
 
-static void __cdecl AddRows(void *page) {
+// ---- the "Voices and text" page --------------------------------------------------------------
+// The options screen keeps its pages in a vector at +0x2D8 ({vtbl, data, byte size, allocator if,
+// allocator, capacity}); each page is the same vector (its rows, 0x40 bytes each) plus an id at +0x30:
+// 0 gameplay, 1 controller hints, 3 audio, 4 graphics, 6 change user, 5 credits, then 7 (not listed:
+// the list shows size - 1 entries). The left list names a page with the key table at exe+0x1433008
+// indexed by id (exe+0x38CA2D). A new page (id 8) is inserted after graphics before the builder runs
+// (exe+0x39470E), its name comes from a copy of that table with one more key, and its rows are added
+// with the gameplay rows (exe+0x3550A4).
+static const uint32_t kPageId = 8;
+static const size_t kPageSize = 0x38;
+static const char *g_pageNames[9] = {};
+
+static uint8_t *FindPage(uint8_t *screen, uint32_t id) {
+  uint8_t *d = *(uint8_t **)(screen + 0x2E0);
+  uint64_t n = *(uint64_t *)(screen + 0x2E8) / kPageSize;
+  for (uint64_t i = 0; d && i < n; ++i)
+    if (*(uint32_t *)(d + i * kPageSize + 0x30) == id) return d + i * kPageSize;
+  return nullptr;
+}
+
+static void __cdecl InsertPage(uint8_t *screen) {
+  if (FindPage(screen, kPageId)) return;
+  uint8_t *vec = screen + 0x2D8;
+  uint64_t size = *(uint64_t *)(vec + 0x10);
+  if (!*(uint8_t **)(vec + 8) || size < kPageSize || size % kPageSize) return;
+  typedef void (*PFN_Reserve)(void *vec, uint64_t bytes, uint8_t exact);
+  ((PFN_Reserve)((uint8_t *)gfxopt::g_exe + 0x0007D020))(vec, size + kPageSize, 0);
+  uint8_t *d = *(uint8_t **)(vec + 8);
+  if (!d || *(uint64_t *)(vec + 0x28) < size + kPageSize) return;
+  uint64_t n = size / kPageSize, at = n - 1;  // before the hidden last page by default
+  for (uint64_t i = 0; i < n; ++i)
+    if (*(uint32_t *)(d + i * kPageSize + 0x30) == 4) at = i + 1;  // right after graphics
+  memmove(d + (at + 1) * kPageSize, d + at * kPageSize, (size_t)((n - at) * kPageSize));
+  uint8_t *pg = d + at * kPageSize;
+  memcpy(pg, d, kPageSize);           // same vector type and allocator as the first page
+  *(uint64_t *)(pg + 0x08) = 0;       // no rows yet
+  *(uint64_t *)(pg + 0x10) = 0;
+  *(uint64_t *)(pg + 0x28) = 0;
+  *(uint64_t *)(pg + 0x30) = kPageId;
+  *(uint64_t *)(vec + 0x10) = size + kPageSize;
+}
+
+static void __cdecl AddRows(void *, uint8_t *screen) {
+  uint8_t *page = FindPage(screen, kPageId);
+  if (!page) return;
   typedef void (*PFN_AddItem)(void *page, const gfxopt::MenuItem *item);
   PFN_AddItem add = (PFN_AddItem)((uint8_t *)gfxopt::g_exe + 0x00340DB0);
   gfxopt::MenuItem it = {};
@@ -94,29 +138,56 @@ static void __cdecl AddRows(void *page) {
 
 static void Install(HMODULE hExe) {
   uint8_t *exe = (uint8_t *)hExe;
-  // Options builder, end of the first page: `mov rbx, [rsi+0x2E0]` (rbx = that page until here).
-  uint8_t *site = exe + 0x003550A4;
+  uint8_t *site = exe + 0x003550A4;   // builder, after the gameplay rows: mov rbx, [rsi+0x2E0]
+  uint8_t *entry = exe + 0x0039470E;  // jmp builder (exe+0x354CB0), rbx = rcx = options screen
+  uint8_t *name = exe + 0x0038CA2D;   // lea rcx, [page name keys]
   static const uint8_t kSite[] = {0x48, 0x8B, 0x9E, 0xE0, 0x02, 0x00, 0x00};
-  if (memcmp(site, kSite, sizeof(kSite)) != 0) {
-    log_line("[lang] WARNING: unexpected options builder code; language rows not added\r\n");
+  uint8_t *names = exe + 0x01433008;
+  bool ok = memcmp(site, kSite, sizeof(kSite)) == 0 && entry[0] == 0xE9 &&
+            entry + 5 + *(int32_t *)(entry + 1) == exe + 0x00354CB0 && name[0] == 0x48 && name[1] == 0x8D &&
+            name[2] == 0x0D && name + 7 + *(int32_t *)(name + 3) == names;
+  if (!ok) {
+    log_line("[lang] WARNING: unexpected options screen code; voices and text page not added\r\n");
     return;
   }
   LoadChoices();
-  uint8_t *mem = (uint8_t *)AllocateNearAddress(site, 0x100);
+  uint8_t *mem = (uint8_t *)AllocateNearAddress(site, 0x200);
   if (!mem) return;
   DWORD old = 0;
-  VirtualProtect(mem, 0x100, PAGE_EXECUTE_READWRITE, &old);
+  VirtualProtect(mem, 0x200, PAGE_EXECUTE_READWRITE, &old);
+
+  // page name keys: the game's eight + ours
+  const char **tbl = (const char **)(mem + 0x180);
+  memcpy(tbl, names, 8 * sizeof(char *));
+  tbl[kPageId] = "ID_RL_VOICE_TEXT";
+
   uint8_t *q = mem;
-  *q++ = 0x48; *q++ = 0x83; *q++ = 0xEC; *q++ = 0x20;                                     // sub rsp,20h
-  *q++ = 0x48; *q++ = 0x89; *q++ = 0xD9;                                                  // mov rcx,rbx
-  *q++ = 0x48; *q++ = 0xB8; { void *f = (void *)&AddRows; memcpy(q, &f, 8); q += 8; }     // mov rax,AddRows
-  *q++ = 0xFF; *q++ = 0xD0;                                                               // call rax
-  *q++ = 0x48; *q++ = 0x83; *q++ = 0xC4; *q++ = 0x20;                                     // add rsp,20h
-  memcpy(q, kSite, sizeof(kSite)); q += sizeof(kSite);                                    // mov rbx,[rsi+2E0h]
+  // rows: sub rsp,20h ; mov rcx,rbx ; mov rdx,rsi ; call AddRows ; add rsp,20h ; mov rbx,[rsi+2E0h] ; jmp back
+  uint8_t *stubRows = q;
+  *q++ = 0x48; *q++ = 0x83; *q++ = 0xEC; *q++ = 0x20;
+  *q++ = 0x48; *q++ = 0x89; *q++ = 0xD9;
+  *q++ = 0x48; *q++ = 0x89; *q++ = 0xF2;
+  *q++ = 0x48; *q++ = 0xB8; { void *f = (void *)&AddRows; memcpy(q, &f, 8); q += 8; }
+  *q++ = 0xFF; *q++ = 0xD0;
+  *q++ = 0x48; *q++ = 0x83; *q++ = 0xC4; *q++ = 0x20;
+  memcpy(q, kSite, sizeof(kSite)); q += sizeof(kSite);
   q = gfxopt::EmitJmpAbs(q, site + sizeof(kSite));
-  FlushInstructionCache(GetCurrentProcess(), mem, (size_t)(q - mem));
-  if (gfxopt::WriteJmpRel(site, mem, sizeof(kSite)))
-    log_line("[lang] language rows added (text %ls, voice %ls)\r\n", kLocale[g_text],
+  // entry (stack as at a call target): push rcx ; sub rsp,20h ; call InsertPage ; add rsp,20h ; pop rcx ; jmp builder
+  uint8_t *stubEntry = q;
+  *q++ = 0x51;
+  *q++ = 0x48; *q++ = 0x83; *q++ = 0xEC; *q++ = 0x20;
+  *q++ = 0x48; *q++ = 0xB8; { void *f = (void *)&InsertPage; memcpy(q, &f, 8); q += 8; }
+  *q++ = 0xFF; *q++ = 0xD0;
+  *q++ = 0x48; *q++ = 0x83; *q++ = 0xC4; *q++ = 0x20;
+  *q++ = 0x59;
+  q = gfxopt::EmitJmpAbs(q, exe + 0x00354CB0);
+  FlushInstructionCache(GetCurrentProcess(), mem, 0x200);
+
+  int32_t rel = (int32_t)((uint8_t *)tbl - (name + 7));
+  bool done = gfxopt::WriteJmpRel(site, stubRows, sizeof(kSite)) && gfxopt::WriteJmpRel(entry, stubEntry, 5) &&
+              gfxopt::WriteCode(name + 3, &rel, 4);
+  if (done)
+    log_line("[lang] voices and text page added (text %ls, voice %ls)\r\n", kLocale[g_text],
              g_voice ? kLocale[g_voice - 1] : L"same as text");
 }
 
