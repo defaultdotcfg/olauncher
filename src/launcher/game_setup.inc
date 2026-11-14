@@ -52,6 +52,27 @@ static bool FindGameCopy(const wchar_t *dir, wchar_t *mount, wchar_t *root)
     return false;
 }
 
+// The player's copy a game folder runs from. A folder prepared by the launcher has a "dat" junction
+// to <copy>\Mount\dat; otherwise the folder is the copy's Mount itself.
+static bool SourceCopyOf(const wchar_t *gameDir, wchar_t *mount, wchar_t *root)
+{
+    wchar_t dat[MAX_PATH], fin[MAX_PATH];
+    swprintf_s(dat, MAX_PATH, L"%ls\\dat", gameDir);
+    DWORD a = GetFileAttributesW(dat);
+    if (a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_REPARSE_POINT)) return FindGameCopy(gameDir, mount, root);
+    HANDLE h = CreateFileW(dat, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD n = GetFinalPathNameByHandleW(h, fin, MAX_PATH, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    CloseHandle(h);
+    if (!n || n >= MAX_PATH) return false;
+    std::wstring p = fin;
+    if (!p.compare(0, 8, L"\\\\?\\UNC\\")) p = L"\\\\" + p.substr(8);
+    else if (!p.compare(0, 4, L"\\\\?\\")) p = p.substr(4);
+    wcscpy_s(fin, MAX_PATH, p.c_str());
+    PathRemoveFileSpecW(fin);  // <copy>\Mount\dat -> <copy>\Mount
+    return FindGameCopy(fin, mount, root);
+}
+
 static bool PortFilesNextToLauncher()
 {
     for (const wchar_t *f : kPortFiles) if (!FileExistsIn(g_exeDir, f)) return false;

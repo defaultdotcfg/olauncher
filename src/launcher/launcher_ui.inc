@@ -125,7 +125,7 @@ enum UiStr {
     S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL,
     S_HOME_TITLE, S_HOME_HINT, S_INSTALL_TITLE, S_INSTALL_HINT, S_INSTALL_READY, S_INSTALL_MISSING,
     S_PATCH_ASK, S_PICK_PATCH, S_BAD_PATCH, S_PATCH_CONFIRM, S_PATCH_PROGRESS, S_PATCH_FAIL, S_HOME_PROFILE, S_HOME_PLAYTIME,
-    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_COUNT
+    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_OLD_GAME, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -227,6 +227,9 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Escuro", L"Dark", L"Oscuro" },
     { L"Claro", L"Light", L"Claro" },
     { L"Configurações", L"Settings", L"Configuración" },
+    { L"O jogo nesta pasta é a versão %ls, mas o port funciona só com a versão final, %ls.\n\nEscolha a sua cópia do ONRUSH (o pacote extraído) para o launcher atualizá-la com o patch e preparar o jogo de novo.",
+      L"The game in this folder is version %ls, but the port only works with the final version, %ls.\n\nChoose your ONRUSH copy (the extracted package) so the launcher can update it with the patch and set the game up again.",
+      L"El juego en esta carpeta es la versión %ls, pero el port solo funciona con la versión final, %ls.\n\nElige tu copia de ONRUSH (el paquete extraído) para que el launcher la actualice con el parche y prepare el juego de nuevo." },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
 
@@ -361,6 +364,44 @@ static bool AskGameFolder(HWND hwnd)
         if (MessageBoxW(hwnd, T(S_BAD_DIR), L"ONRUSH", MB_ICONWARNING | MB_YESNO) != IDYES) break;
     }
     return false;
+}
+
+// Only the final version runs on the port. Checked at every launch, not just at setup: the folder may
+// hold a copy prepared before the version check existed (or by an older launcher) that was never patched.
+// An old copy is patched and the files copied from it are refreshed. True when the game can start.
+static void ReadUiIntoConfig();
+static bool EnsureFinalGameVersion(HWND hwnd, const wchar_t *gameDir)
+{
+    wchar_t mount[MAX_PATH], root[MAX_PATH], msg[1024];
+    bool haveSrc = SourceCopyOf(gameDir, mount, root);
+    std::wstring ver = GameCopyVersion(gameDir);
+    if (ver.empty() && haveSrc) ver = GameCopyVersion(mount);
+    if (ver == kFinalVersion) return true;
+    if (ver.empty())
+    {   // no appxmanifest.xml anywhere: nothing to compare with
+        LogPrintf(L"[Setup] versão do jogo desconhecida (sem appxmanifest.xml em %ls)\r\n", gameDir);
+        return true;
+    }
+    LogPrintf(L"[Setup] o jogo em %ls é a versão %ls; o port precisa da %ls\r\n", gameDir, ver.c_str(), kFinalVersion);
+    if (!haveSrc)
+    {
+        swprintf_s(msg, 1024, T(S_OLD_GAME), ver.c_str(), kFinalVersion);
+        if (MessageBoxW(hwnd, msg, L"ONRUSH", MB_ICONWARNING | MB_OKCANCEL) != IDOK || !AskGameFolder(hwnd)) return false;
+        ReadUiIntoConfig(); SaveIni();
+        RefreshGameDirStatus(hwnd);
+        return GameCopyVersion(g_gameDirShown) == kFinalVersion;
+    }
+    if (GameCopyVersion(mount) != kFinalVersion && !OfferGamePatch(hwnd, mount, root)) return false;
+    std::wstring err;
+    if (!SetupGameFolder(mount, root, gameDir, err))
+    {
+        swprintf_s(msg, 1024, T(S_SETUP_FAIL), err.c_str());
+        MessageBoxW(hwnd, msg, L"ONRUSH", MB_ICONERROR);
+        return false;
+    }
+    ver = GameCopyVersion(gameDir);
+    LogPrintf(L"[Setup] jogo em %ls agora na versão %ls\r\n", gameDir, ver.c_str());
+    return ver == kFinalVersion;
 }
 
 static void FillRound(HDC hdc, RECT r, int rad, COLORREF fill, COLORREF border)
@@ -1123,6 +1164,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
                 RefreshGameDirStatus(hwnd);
             }
+            if (!EnsureFinalGameVersion(hwnd, g_gameDirShown)) return 0;
             if (FileExistsIn(g_gameDirShown, L"game_release_xbox.exe") &&
                 (!FileExistsIn(g_gameDirShown, L"onrush-pc.exe") || GameExeIconStale(g_gameDirShown)) && BrandGameExe(g_gameDirShown))
                 LogPrintf(L"[Setup] onrush-pc.exe criado a partir de game_release_xbox.exe\r\n");

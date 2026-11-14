@@ -1,5 +1,10 @@
 # Changelog
 
+## Não lançado
+
+### Launcher
+- O JOGAR agora confere a versão do jogo antes de abrir. Uma pasta preparada com uma cópia 1.0.64980.34 (por exemplo, a de uma instalação da v0.1.0 reaproveitada pela v0.1.1) fazia o jogo fechar logo no início. Agora o launcher acha a cópia original pelo atalho `dat`, pede a pasta do patch, atualiza a cópia para a 1.80.100.100 e prepara a pasta do jogo de novo. Se a cópia original não for encontrada, ele pede para escolher a cópia ([#2](https://github.com/defaultdotcfg/rushlauncher/issues/2)).
+
 ## v0.1.1 — versão final do jogo, perfis, fotos e correções gráficas
 
 **Atenção:** a partir desta versão o port mira só a versão final do jogo, **1.80.100.100**. Se a sua cópia for a 1.0.64980.34, o launcher pede a pasta do patch de atualização e aplica as diferenças sozinho (os arquivos do patch são movidos para a pasta do jogo, não copiados).
