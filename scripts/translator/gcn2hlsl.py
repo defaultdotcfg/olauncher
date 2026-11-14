@@ -16,6 +16,9 @@ import sys, re as _re, struct, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gcn_dis as G
 
+class NoGcnProgram(Exception):
+    """The container carries no Xbox (GCN) program: the packs also hold containers the game never creates on the console."""
+
 
 class _ReCache:
     """`re` with a plain dict of compiled patterns: the translator calls re.fullmatch/search/... with literal patterns
@@ -299,6 +302,7 @@ class Tr:
     def run(self):
         raw = G.read_file(self.path)
         blob = G.extract_code_from_dxbc(self.path)
+        if blob is None: raise NoGcnProgram()
         s0, e0 = G.find_code(blob)
         self.blob = blob; self.code_start = s0
         lines = G.disasm(blob[s0:e0])

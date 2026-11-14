@@ -1,5 +1,10 @@
 # Changelog
 
+## Não lançado
+
+### Tradutor
+- Os pacotes do jogo também trazem ~5600 contêineres de shader sem programa do Xbox, que o jogo nunca usa. O log os mostrava como erro do Python (`AttributeError: 'NoneType' object has no attribute 'find'`), o que parecia uma falha da preparação. Agora eles aparecem como "no Xbox program (not used by the game)".
+
 ## v0.1.4 — pasta do jogo ligada a uma cópia movida ou renomeada
 
 **Como atualizar:** não é preciso apagar a pasta do launcher. A partir da v0.1.1, o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.

@@ -29,6 +29,8 @@ def translate_one(f, hx, kind, patches):
     if hx in set(patches.get('_stub_image', [])): os.environ['STUB_IMAGE'] = '1'
     try:
         txt, todo = T.translate(f)
+    except T.NoGcnProgram:
+        return None, f"{kind}: no Xbox program (not used by the game)"
     except Exception as e:
         return None, f"{kind}: {type(e).__name__}: {str(e)[:80]}"
     finally:
